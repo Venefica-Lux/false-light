@@ -503,7 +503,7 @@ const buzz = (p) => {
 };
 
 // ---------- coaching: one line, once, at the moment it matters ----------
-const HINTS = ["dots", "roll", "lethal", "cost", "masks", "danger", "goal", "bond", "light"];
+const HINTS = ["dots", "roll", "lethal", "cost", "masks", "danger", "goal", "bond", "light", "inspect", "night", "activation"];
 const DANGER_HINT = {
   mark: (v, m) => `Mark ${v}/${m}. At 6 you're Named.`,
   strain: (v, m) => `Strain ${v}/${m}. At 6 you Fracture.`,
@@ -534,7 +534,12 @@ function buildHud() {
         <span class="lbl">${m.label.toUpperCase()}</span><span class="num"></span></button>`,
     )
     .join("");
-  for (const [k, m] of Object.entries(METERS)) $("m-" + k).onclick = () => toast(m.hint);
+  for (const [k, m] of Object.entries(METERS)) $("m-" + k).onclick = () => run && toast(`${m.label} ${run[k]}/${m.max}. ${m.hint}`);
+  // Every track and the Bell answer a tap the same way the meters do: what it is, where it stands, what it does.
+  for (const [k, id] of Object.entries(TRACK_EL)) {
+    $(id).onclick = (e) => run && !e.target.closest(".bond") && toast(TRACK_INFO[k](run));
+  }
+  $("bell").onclick = () => run && toast(bellInfo(run));
   $("masks").innerHTML = Object.entries(MASKS)
     .map(([k, m]) => `<button class="mask" id="k-${k}" type="button">${svg(MASK_ART[k], 5)}<span class="nm">${m.name.toUpperCase()}</span><span class="cost"></span></button>`)
     .join("");
@@ -586,6 +591,18 @@ function floatDelta(anchor, k, v) {
 let lastVals = {};
 let previews = {};
 const TRACK_EL = { untag: "t-untag", gnosis: "t-gnosis", longing: "t-longing", cage: "t-cage" };
+const TRACK_SIZE = { untag: 12, gnosis: 12, longing: 4, cage: 8 };
+const TRACK_NAME = { untag: "Untaggable", gnosis: "Gnosis", longing: "Longing", cage: "The Cage" };
+// Said when a track is tapped. Rules only: every line is something the engine does.
+const TRACK_INFO = {
+  untag: (s) => `Untaggable ${s.untag}/12: how hard you are to file. Fill it and Gnosis together for the Double Crown.`,
+  gnosis: (s) =>
+    `Gnosis ${s.gnosis}/12: what you know that they can't take back. Fill it and Untaggable together for the Double Crown.${s.communion > 0 ? " In the Light it can't rise." : s.apo >= 5 ? " Menace has stopped it rising." : ""}`,
+  longing: (s) => `Longing ${s.longing}/4: the ache the Light feeds on. At 3 or more, the False Light starts finding you.`,
+  cage: (s) => `The Cage ${s.cage}/8. It grows when help comes without terms. At 8 it closes.`,
+};
+const bellInfo = (s) =>
+  `The Bell: card ${Math.min(s.bell + 1, CARDS_PER_DAY)} of ${CARDS_PER_DAY} today. After card ${CARDS_PER_DAY}, nightfall: no Favor or a full Hollow ends the run, and a night without rest adds Hollow.`;
 function renderHud() {
   const s = run;
   previews = {};
@@ -617,6 +634,7 @@ function renderHud() {
     $(id).querySelectorAll(".segs i,.pips i").forEach((i, n) => i.classList.toggle("on", n < v));
     $(id).querySelector(".n").textContent = `${v}/${max}`;
   };
+  for (const [k, id] of Object.entries(TRACK_EL)) $(id).querySelector(".tl").setAttribute("aria-label", `${TRACK_NAME[k]} ${s[k]} of ${TRACK_SIZE[k]}`);
   fill("t-untag", s.untag, 12);
   fill("t-gnosis", s.gnosis, 12);
   fill("t-longing", s.longing, 4);
@@ -647,6 +665,8 @@ function renderHud() {
     b.setAttribute("aria-pressed", String(s.mask === k));
     b.classList.toggle("locked", s.maskLocked && s.mask !== k);
     b.querySelector(".cost").textContent = s.mask === k ? (s.maskLocked ? "seized" : "worn") : c ? `+${c} strain` : "free";
+    const state = s.mask === k ? (s.maskLocked ? "seized, worn" : "worn") : c ? `wear it for ${c} Strain` : "wear it free";
+    b.setAttribute("aria-label", `${MASKS[k].name}: ${state}. Hold for what it does.`);
   }
   const m = MASKS[s.mask];
   $("maskline").textContent = s.maskLocked
@@ -690,8 +710,9 @@ function renderCard(deal = true) {
   showPreview(null, 0);
   if (c.art === "sun") sfx.light();
   if (!c.tutorial) maskHint(c);
-  if (previewOf("left").lethal || previewOf("right").lethal) coach("lethal", `${SKULL} marks a choice that can end your run. Drag to see the odds.`);
+  if (previewOf("left").lethal || previewOf("right").lethal) coach("lethal", `${SKULL} marks a choice that can end your run. Drag the card or tap a choice to see the odds.`);
   if (cardCosts(run).length) coach("cost", "Some cards cost you either way. When they do, it's written under the card.");
+  if (!c.tutorial) coach("inspect", "Tap any meter, track or the dots of the Bell to see what it means. Hold a Mask to read it.");
 }
 
 // Masks are taught at a dawn card that rolls a stat some other Mask raises, while changing is still free.
@@ -699,8 +720,8 @@ const MASK_FOR = { shade: "nyx", steel: "eris", freq: "lilith" };
 function maskHint(c) {
   if (run.bell !== 0 || run.maskLocked) return;
   const stat = ["left", "right"].map((k) => c[k].roll && c[k].roll.stat).find((st) => MASK_FOR[st] && MASK_FOR[st] !== run.mask);
-  if (stat) coach("masks", `${MASKS[MASK_FOR[stat]].name} adds +1 ${STAT_LABEL[stat]}, and this card rolls ${STAT_LABEL[stat]}. Tap a Mask to wear it: free at dawn, Strain after.`);
-  else if (run.day >= 2) coach("masks", "Masks are free to change at dawn. Each adds +1 to one stat and carries a risk. Long-press one to see what it's for.");
+  if (stat) coach("masks", `${MASKS[MASK_FOR[stat]].name} adds +1 ${STAT_LABEL[stat]}, and this card rolls ${STAT_LABEL[stat]}. Tap a Mask to wear it (free at dawn), or hold it to read it.`);
+  else if (run.day >= 2) coach("masks", "Masks are free to change at dawn. Each adds +1 to one stat and carries a risk. Hold one to read it.");
 }
 
 function previewOf(side) {
@@ -733,9 +754,12 @@ function oddsLine(p) {
   return parts.join(" · ");
 }
 function idleLine() {
-  return cardCosts(run)
-    .map((c) => `<span class="costline">${esc(c.text)}</span>`)
-    .join(" · ");
+  const lines = cardCosts(run).map((c) => `<span class="costline">${esc(c.text)}</span>`);
+  // State that runs on a clock the board doesn't otherwise show.
+  const c = currentCard(run);
+  if (run.communion > 1 && c.id !== "whisper" && c.id !== "reckoning") lines.push(`<span class="statusline">In the Light · ${run.communion} cards left, then the Reckoning</span>`);
+  if (run.bell === CARDS_PER_DAY - 1 && run.restedToday && !c.tutorial) lines.push(`<span class="statusline">Nightfall after this card. You rested today</span>`);
+  return lines.join(" · ");
 }
 
 function showPreview(side, strength) {
@@ -864,6 +888,15 @@ function diceHtml(r) {
     })
     .join("");
 }
+function chipsHtml(delta) {
+  return Object.entries(delta)
+    .filter(([k, v]) => v && DLBL[k] && (k !== "cage" || run.cageSeen))
+    .map(([k, v]) => {
+      const good = GOOD_UP.has(k) ? v > 0 : v < 0;
+      return `<span class="chip ${good ? "good" : "bad"}">${DLBL[k]} ${v > 0 ? "+" : "−"}${Math.abs(v)}</span>`;
+    })
+    .join("");
+}
 const VERDICT = { radiance: "RADIANCE", hit: "CLEAN", mid: "AT A COST", miss: "THE WORLD MOVES", ruin: "RUIN" };
 const DLBL = { mark: "Mark", strain: "Strain", favor: "Favor", hollow: "Hollow", longing: "Longing", untag: "Untaggable", gnosis: "Gnosis", cage: "Cage" };
 
@@ -879,15 +912,15 @@ function slip(res) {
       html += `<div class="dice">${diceHtml(r)}</div><div class="math">${mod} = <b>${r.total}</b></div><div class="verdict ${r.tier}">${VERDICT[r.tier]}</div>`;
     }
     html += `<p>${esc(res.text)}</p>`;
-    const chips = Object.entries(res.delta)
-      .filter(([k, v]) => v && DLBL[k] && (k !== "cage" || run.cageSeen))
-      .map(([k, v]) => {
-        const good = GOOD_UP.has(k) ? v > 0 : v < 0;
-        return `<span class="chip ${good ? "good" : "bad"}">${DLBL[k]} ${v > 0 ? "+" : "−"}${Math.abs(v)}</span>`;
-      })
-      .join("");
+    // When the night follows (and the run goes on), its changes are shown on the nightfall screen instead.
+    const night = res.nightfall && !res.ending ? res.nightfall : null;
+    const nd = (night && night.delta) || {};
+    // Over both key sets: a card's Strain +1 that the night takes back nets to nothing in res.delta.
+    const own = Object.fromEntries([...new Set([...Object.keys(res.delta), ...Object.keys(nd)])].map((k) => [k, (res.delta[k] || 0) - (nd[k] || 0)]));
+    const notes = night && night.notes ? res.notes.slice(0, res.notes.length - night.notes.length) : res.notes;
+    const chips = chipsHtml(own);
     if (chips) html += `<div class="deltas">${chips}</div>`;
-    if (res.notes.length) html += `<div class="notes">${res.notes.map((n) => `<span>${esc(n)}</span>`).join("")}</div>`;
+    if (notes.length) html += `<div class="notes">${notes.map((n) => `<span>${esc(n)}</span>`).join("")}</div>`;
     html += `<div class="tap">Tap to go on</div>`;
     el.innerHTML = html;
     $("play").appendChild(el);
@@ -945,23 +978,43 @@ function overlay(html, { dismiss = true, cls = "" } = {}) {
 function nightfall(res) {
   sfx.bell();
   buzz([30, 60, 30]);
-  const notes = res.notes.filter((n) => n.startsWith("Nightfall"));
+  const nf = res.nightfall;
+  const chips = nf.delta ? chipsHtml(nf.delta) : "";
+  // The chips already say Hollow +1; keep only notes that add something (a Bond spent at night).
+  const notes = (nf.notes || res.notes.filter((n) => n.startsWith("Nightfall"))).filter((n) => !(chips && n.startsWith("Nightfall without rest")));
+  // The first nightfall says what a night does; after that the chips are enough.
+  const first = !meta.hints.night;
+  if (first) {
+    meta.hints.night = 1;
+    saveMeta();
+  }
   return overlay(`<div class="eyebrow">The Bell</div><h2 class="big">Night ${run.day - 1} ends</h2>
-    <p class="line">${res.nightfall.rested ? "You slept behind a barred door. The night gave something back." : "Behind the wall, just barely. You didn't really sleep, and your body noticed."}</p>
-    ${notes.map((n) => `<p class="fine">${esc(n)}</p>`).join("")}<p class="tap">Tap for dawn</p>`);
+    <p class="line">${nf.rested ? "You slept behind a barred door. The night gave something back." : "Behind the wall, just barely. You didn't really sleep, and your body noticed."}</p>
+    ${chips ? `<div class="deltas">${chips}</div>` : ""}
+    ${notes.map((n) => `<p class="fine">${esc(n)}</p>`).join("")}
+    ${first ? `<p class="fine">Every ${CARDS_PER_DAY} cards the Bell rings. A night takes Strain off (more if you rested) and adds Hollow if you didn't. If nightfall finds you with no Favor, or Hollow full, the run ends.</p>` : ""}
+    <p class="tap">Tap for dawn</p>`);
 }
 
 async function activation(ev) {
   const r = ev.roll;
+  const first = !meta.hints.activation;
+  if (first) {
+    meta.hints.activation = 1;
+    saveMeta();
+  }
+  const why = first
+    ? `<p class="fine">Once a day, with Strain at 4 or more and another meter near its limit, a Mask tries to answer for you. The dice decide: 10+ you stay yourself, 7–9 it stirs, 6 or less it seizes you until nightfall.</p>`
+    : "";
   const head = `<div class="eyebrow">Activation</div><div class="dice">${diceHtml(r)}</div>
     <h2 class="big" style="font-size:34px">${ev.kind === "seizure" ? "Seizure" : ev.kind === "stir" ? "The Mask stirs" : "Sovereignty holds"}</h2>
-    <p class="line">${esc(ev.text)}</p>`;
+    <p class="line">${esc(ev.text)}</p>${why}`;
   if (ev.kind === "stir" && run.stir) {
     // §9.5, 7–9: the player decides, and the decision costs something either way.
     const m = MASKS[run.stir];
     const v = await overlay(
       `${head}<p class="fine">${esc(m.name)}: ${esc(m.bonus)} · ${esc(m.risk)}</p>
-      <div class="row"><button class="btn primary" data-v="let" type="button">Let ${esc(m.name)} answer</button>
+      <div class="row"><button class="btn primary" data-v="let" type="button">Let ${esc(m.name)} answer · wear it</button>
       <button class="btn" data-v="hold" type="button"${run.favor < 1 ? " disabled" : ""}>Hold the wheel · −1 Favor</button></div>`,
       { dismiss: false },
     );
@@ -1098,7 +1151,7 @@ function endHtml(s, text, info) {
   return `<div class="eyebrow">${s.mode === "vigil" ? `Vigil #${vigilNumber(s.seedLabel)}` : "Endless"} · Night ${s.day}</div>
     ${info.firstFind ? `<div class="newend">${e.win ? `Your first ${esc(e.title.replace(/^The /, ""))}` : "A new ending"}, ${found} of ${keys.length} found</div>` : ""}
     <h2 class="big">${esc(e.title)}</h2><p class="line">${esc(e.line)}</p>
-    <p class="endcause">${causeSentence(s)}${e.win ? `${esc(e.title)} on night ${s.day}.` : `You lasted ${plural(n, "night")}`}${e.win ? "" : info.newBest ? `, <b class="best">your best yet</b>.` : meta.plays > 1 ? `. Your best is ${meta.best}.` : "."}</p>
+    <p class="endcause">${causeSentence(s)}${e.win ? `${esc(e.title)} on night ${s.day}.` : n === 0 ? "You didn't reach the first nightfall" : `You lasted ${plural(n, "night")}`}${e.win ? "" : info.newBest ? `, <b class="best">your best yet</b>.` : meta.plays > 1 ? `. Your best is ${meta.best}.` : "."}</p>
     ${lesson(s)}
     ${vs}
     <div class="endact"><button class="btn primary" data-v="again" type="button">Run again</button>
@@ -1300,6 +1353,7 @@ function renderHome() {
   }
   html += `<button class="btn" id="b-endless" type="button">${resumeEndless ? "Resume endless run" : "Endless run"}</button>`;
   if (resumeEndless) html += `<button class="sub" id="b-endless-new" type="button">Abandon it and start over</button>`;
+  else html += `<span class="sub">As many runs as you like. A new deck every time.</span>`;
   $("menu").innerHTML = html;
   if ($("b-challenge")) $("b-challenge").onclick = () => start("vigil", ch.date);
   if ($("b-vigil")) $("b-vigil").onclick = () => start("vigil", date);
@@ -1374,14 +1428,19 @@ function howTo() {
     `<div class="eyebrow">How to play</div><div class="rules">
     <p><b>Swipe the card</b> left or right (or tap a choice twice). Lit vials and tracks show what a choice will move, never which way. ${SKULL} marks a choice that can end your run.</p>
     <p><b>Four meters.</b> Mark 6: you're Named. Strain 6: you Fracture (3 Favor absorbs one). Favor 0 or Hollow 4 at nightfall: it's over.</p>
+    <p><b>Tap to check.</b> Tap any meter, track or the Bell in play for what it means and where it stands. Hold a Mask to read it.</p>
+    <p><b>The Bell</b> (the dots, top right) counts four cards a day, then nightfall. A night takes some Strain off; a night without rest adds Hollow.</p>
+    <p><b>Longing</b> is the ache the Light feeds on. At 3 or more, the False Light starts finding you.</p>
     <p><b>Rolls</b> are 2d6 + stat. 10+ clean, 7–9 at a cost, 6− the world moves. Double six is Radiance; snake eyes is Ruin. Hollow 3 rolls three dice and keeps the worst two.</p>
-    <p><b>Masks</b> add +1 to a stat and carry a risk: Nyx Shade, Eris Steel, Lilith Frequency, and the Bare Face heals Hollow twice as fast. Changing is free at dawn, +1 Strain after (+1 more at Hollow 2). Under enough load a Mask can seize you: it holds until nightfall unless you pay +2 Strain to break it. Long-press a Mask in play, or open the guide below, for what each one is for.</p>
+    <p><b>Masks</b> add +1 to a stat and carry a risk: Nyx Shade, Eris Steel, Lilith Frequency, and the Bare Face heals Hollow twice as fast. Changing is free at dawn, +1 Strain after (+1 more at Hollow 2). Under enough load a Mask can seize you: it holds until nightfall unless you pay +2 Strain to break it. Hold a Mask in play, or open the guide below, for what each one is for.</p>
     <p><b>The False Light</b> takes Strain and Hollow away, instantly. While it lasts, Gnosis can't rise. Then the Reckoning comes due, with interest, and putting it off with more Light leaves a tell: Mark +1 a dose.</p>
     <p><b>Bonds</b> are people: the Sister, the Sponsor, the Open Table. Each catches you once, from one kind of ending (Mark, Strain, a bad nightfall), then it's spent. Tap one to see what it saves.</p>
     <p><b>Win</b> one of two ways. Fill UNTAGGABLE and GNOSIS: the Double Crown. Or earn all three Bonds, get a room at the House, and rest through a night: Ordinary Time. Some things you won't see until it's too late to see them.</p>
     <p><b>Masks</b> open their own roads. Wear one and the city shows you cards it shows nobody else.</p>
-    <p><b>Vigil</b>: one daily run. Everyone draws from the same seed, and dice never reorder it, but your choices change which cards can appear. Share your result and the link carries the seed and your score. <b>Endless</b>: as many as you like.</p></div>
-    <div class="row"><button class="btn" data-v="masks" type="button">The Masks</button><button class="btn" data-v="tut" type="button">Replay the tutorial next run</button><button class="btn ghost" data-v="ok" type="button">Close</button></div>`,
+    <p><b>Vigil</b>: one daily run. Everyone draws from the same seed, and dice never reorder it, but your choices change which cards can appear. Share your result and the link carries the seed and your score. <b>Endless</b>: as many as you like.</p>
+    <p><b>Leaving</b> a run (☰, top left) keeps it; it resumes from the menu. Starting a different run asks before it ends the old one, and a Vigil you walk away from still counts as your attempt.</p>
+    <p><b>Offline.</b> Add it to your home screen from the browser's menu. Once it has opened online it plays offline; each track is kept after it first plays.</p></div>
+    <div class="row"><button class="btn small" data-v="masks" type="button">The Masks</button><button class="btn small" data-v="tut" type="button">Replay the tutorial</button><button class="btn ghost small" data-v="ok" type="button">Close</button></div>`,
     { dismiss: false },
   ).then((v) => {
     if (v === "masks") return masksGuide().then(howTo);
@@ -1428,7 +1487,7 @@ function toast(msg) {
   t.textContent = msg;
   document.body.appendChild(t);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.remove(), 2600);
+  toastTimer = setTimeout(() => t.remove(), Math.max(2600, msg.length * 55));
 }
 
 // ---------- boot ----------

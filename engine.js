@@ -7,10 +7,10 @@ import { CARDS, ENDINGS } from "./cards.js";
 export { CARDS, ENDINGS };
 
 export const METERS = {
-  mark: { max: 6, label: "Mark", hint: "The Warden's eye. At 6 you are Named." },
-  strain: { max: 6, label: "Strain", hint: "The weight on the soul. At 6 you Fracture." },
+  mark: { max: 6, label: "Mark", hint: "The Warden's eye: how much they've noticed. At 6 you are Named." },
+  strain: { max: 6, label: "Strain", hint: "The weight on the soul. At 6 you Fracture, unless 3 Favor takes the hit. Each night takes 1 off, 2 if you rested." },
   favor: { max: 6, label: "Favor", hint: "Coin, doors, allies. Empty at nightfall and you're Destitute." },
-  hollow: { max: 4, label: "Hollow", hint: "The body's ledger. Full at nightfall and it closes." },
+  hollow: { max: 4, label: "Hollow", hint: "The body's ledger. Each night without rest adds 1. Full at nightfall and it closes." },
 };
 export const TRACK_MAX = { untag: 12, gnosis: 12 };
 export const STATS = { steel: 2, wits: 1, shade: 0, freq: -1 };
@@ -472,7 +472,14 @@ export function choose(s, side, opts = {}) {
   let nightfall = null;
   if (!s.over) {
     s.bell++;
-    if (s.bell >= CARDS_PER_DAY) nightfall = night(s, notes, {});
+    if (s.bell >= CARDS_PER_DAY) {
+      // The night's own share of the turn, so the UI can say what the card did and what the night did.
+      const pre = Object.fromEntries(TRACKED.map((k) => [k, s[k]]));
+      const from = notes.length;
+      nightfall = night(s, notes, {});
+      nightfall.delta = Object.fromEntries(TRACKED.filter((k) => s[k] !== pre[k]).map((k) => [k, s[k] - pre[k]]));
+      nightfall.notes = notes.slice(from);
+    }
   }
   const delta = measure(); // before the next draw, whose Activation roll is reported separately
   if (!s.over) draw(s);

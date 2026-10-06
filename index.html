@@ -116,7 +116,7 @@ body.reckoning .seal i.on{opacity:.1}
 /* ---------- top bar ---------- */
 .top{display:flex;align-items:center;justify-content:space-between;gap:12px;font-family:var(--f-inscr);letter-spacing:.14em;font-size:12px;color:var(--veil-dim)}
 .top b{color:var(--veil);font-weight:600}
-.bell{display:flex;gap:5px;align-items:center}
+.bell{display:flex;gap:5px;align-items:center;padding:12px 0 12px 10px;margin:-12px 0}
 .bell i{width:8px;height:8px;border-radius:50%;border:1px solid var(--gold);display:block}
 .bell i.on{background:var(--gold)}
 .iconbtn{width:36px;height:36px;display:grid;place-items:center;border-radius:50%;color:var(--veil-dim)}
@@ -160,7 +160,7 @@ body.reckoning .seal i.on{opacity:.1}
 .bonds{display:flex}
 /* 44px wide; the hit area extends to 44px tall without making the row any taller */
 .bond{position:relative;display:grid;place-items:center;width:44px;height:20px;margin:-5px 0;color:var(--veil-faint);opacity:.35;transition:opacity .4s,color .4s}
-.bond::after{content:"";position:absolute;left:0;right:0;top:-12px;bottom:-12px}
+.bond::after{content:"";position:absolute;left:0;right:0;top:0;bottom:-24px} /* 44px tall, reaching down, never up into the Gnosis row */
 .bond svg{width:17px;height:17px}
 .bond.on{opacity:1;color:var(--gold);filter:drop-shadow(0 0 4px rgba(242,195,92,.45))}
 .bond.spent{opacity:.6;color:var(--veil-dim)}
@@ -282,7 +282,8 @@ body.reckoning .seal i.on{opacity:.1}
 .gallery h4{margin:0;font-family:var(--f-inscr);font-size:13px;letter-spacing:.1em}
 .gallery p{margin:2px 0 0;font-family:var(--f-display);font-size:16px;color:var(--veil-dim)}
 .gallery .locked{opacity:.75}.gallery .locked h4{color:var(--veil-mute)}.gallery .locked p{font-style:italic}
-.rules{text-align:left;display:grid;gap:8px;font-size:14px;color:var(--veil-dim);max-height:62vh;overflow-y:auto}
+.rules{text-align:left;display:grid;gap:10px;font-size:14px;color:var(--veil-dim);max-height:62vh;overflow-y:auto}
+.rules p{margin:0}
 .rules b{color:var(--veil)}
 .mrow{display:grid;grid-template-columns:28px 1fr;gap:10px;align-items:start}
 .mrow svg{width:28px;height:28px;color:var(--gold);margin-top:2px}
@@ -290,7 +291,7 @@ body.reckoning .seal i.on{opacity:.1}
 .mrow .risk{color:var(--veil-mute)}
 .shareimg{max-width:min(320px,80vw);border-radius:12px;border:1px solid var(--line)}
 textarea.copy{width:100%;min-height:120px;background:var(--plum);color:var(--veil);border:1px solid var(--line);border-radius:10px;padding:10px;font:13px/1.4 var(--f-body)}
-.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:40;padding:9px 16px;border-radius:2px;background:var(--veil);color:var(--void);font-size:13px;animation:fade .2s}
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:40;width:max-content;max-width:min(340px,calc(100vw - 32px));padding:9px 16px;border-radius:2px;background:var(--veil);color:var(--void);font-size:13px;line-height:1.4;pointer-events:none;animation:fade .2s}
 
 /* ---------- consequences you can read at a glance ---------- */
 .meter{position:relative}
@@ -299,12 +300,14 @@ textarea.copy{width:100%;min-height:120px;background:var(--plum);color:var(--vei
 .track .n{position:relative}
 .track .n .float{left:auto;right:0;top:-2px;transform:none;font-size:11px}
 @keyframes floatup{0%{opacity:0;translate:0 6px}15%{opacity:1}100%{opacity:0;translate:0 -18px}}
-.track span:first-child{position:relative;transition:color .15s}
-.track.hot span:first-child{color:var(--veil)}
-.track.hot span:first-child::before{content:"";position:absolute;left:-9px;top:50%;width:5px;height:5px;margin-top:-2.5px;border-radius:50%;background:var(--veil)}
+.track{cursor:pointer}
+.track .tl{position:relative;transition:color .15s;text-align:left;letter-spacing:inherit;padding:4px 0;margin:-4px 0}
+.track.hot .tl{color:var(--veil)}
+.track.hot .tl::before{content:"";position:absolute;left:-9px;top:50%;width:5px;height:5px;margin-top:-2.5px;border-radius:50%;background:var(--veil)}
 .odds{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .odds .lethal{color:var(--alert)}.odds .crown{color:var(--sun)}
 .costline{color:var(--gold)}
+.statusline{color:var(--veil-dim)}
 .choices button{position:relative}
 .choices button.lethal{border-color:rgba(255,77,109,.6)}
 .ico{width:1.05em;height:1.05em;vertical-align:-.15em;display:inline-block}
@@ -333,7 +336,7 @@ textarea.copy{width:100%;min-height:120px;background:var(--plum);color:var(--vei
 .overlay.won .line{color:var(--veil)}
 .overlay.won::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(70% 45% at 50% 0%,rgba(242,195,92,.22),transparent 70%)}
 .track.stalled .segs i.on{background:var(--veil-faint)}
-.track.stalled span:first-child{text-decoration:line-through;text-decoration-color:rgba(242,195,92,.6)}
+.track.stalled .tl{text-decoration:line-through;text-decoration-color:rgba(242,195,92,.6)}
 .endcause b{color:var(--veil);font-weight:600}.endcause .best{color:var(--sun)}
 .vs{margin:0;font-size:14px;color:var(--veil)}.vs b{color:var(--sun)}
 .endact{display:grid;gap:10px;justify-items:center;width:100%}
@@ -371,7 +374,7 @@ textarea.copy{width:100%;min-height:120px;background:var(--plum);color:var(--vei
   .meter{gap:2px}
   .vial{width:24px;height:30px;border-radius:5px 5px 11px 11px}
   .vial::before{width:11px;top:-5px;height:6px}
-  .meter .num{display:none}
+  .meter .num{position:absolute;left:calc(50% + 16px);top:18px;font-size:10px;line-height:1} /* beside the vial: no extra height */
   .meter .lbl{font-size:9px}
   .tracks{gap:3px}
   .track{grid-template-columns:84px 1fr 32px;font-size:9px;line-height:1.2}
@@ -417,16 +420,16 @@ textarea.copy{width:100%;min-height:120px;background:var(--plum);color:var(--vei
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
     </button>
     <div><span id="mode-lbl">VIGIL</span> · NIGHT <b id="day">1</b></div>
-    <div class="bell" id="bell" aria-label="The Bell"></div>
+    <button class="bell" id="bell" type="button" aria-label="The Bell"></button>
   </div>
 
   <div class="meters" id="meters"></div>
 
   <div class="tracks">
-    <div class="track" id="t-untag"><span>UNTAGGABLE</span><div class="segs" style="--n:12"></div><span class="n"></span></div>
-    <div class="track" id="t-gnosis"><span>GNOSIS</span><div class="segs" style="--n:12"></div><span class="n"></span></div>
-    <div class="track" id="t-cage" hidden><span>THE CAGE</span><div class="segs" style="--n:8"></div><span class="n"></span></div>
-    <div class="track" id="t-longing"><span>LONGING</span><div class="lrow"><div class="pips"></div><div class="bonds" id="bonds" aria-label="Bonds"></div></div><span class="n"></span></div>
+    <div class="track" id="t-untag"><button class="tl" type="button">UNTAGGABLE</button><div class="segs" style="--n:12"></div><span class="n"></span></div>
+    <div class="track" id="t-gnosis"><button class="tl" type="button">GNOSIS</button><div class="segs" style="--n:12"></div><span class="n"></span></div>
+    <div class="track" id="t-cage" hidden><button class="tl" type="button">THE CAGE</button><div class="segs" style="--n:8"></div><span class="n"></span></div>
+    <div class="track" id="t-longing"><button class="tl" type="button">LONGING</button><div class="lrow"><div class="pips"></div><div class="bonds" id="bonds" aria-label="Bonds"></div></div><span class="n"></span></div>
   </div>
 
   <div class="play" id="play">
