@@ -11,6 +11,13 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <meta property="og:title" content="False Light" />
 <meta property="og:description" content="A survival card game set in a city that writes everything down. Swipe to choose; a run takes a few minutes; a new Vigil every night." />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://venefica-lux.github.io/false-light/" />
+<meta property="og:image" content="https://venefica-lux.github.io/false-light/icons/icon-512.png" />
+<meta property="og:image:width" content="512" />
+<meta property="og:image:height" content="512" />
+<meta property="og:image:alt" content="False Light" />
+<meta name="twitter:card" content="summary" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600&display=swap" />
@@ -277,6 +284,10 @@ body.reckoning .seal i.on{opacity:.1}
 .gallery .locked{opacity:.75}.gallery .locked h4{color:var(--veil-mute)}.gallery .locked p{font-style:italic}
 .rules{text-align:left;display:grid;gap:8px;font-size:14px;color:var(--veil-dim);max-height:62vh;overflow-y:auto}
 .rules b{color:var(--veil)}
+.mrow{display:grid;grid-template-columns:28px 1fr;gap:10px;align-items:start}
+.mrow svg{width:28px;height:28px;color:var(--gold);margin-top:2px}
+.mrow.on svg{color:var(--magenta)}
+.mrow .risk{color:var(--veil-mute)}
 .shareimg{max-width:min(320px,80vw);border-radius:12px;border:1px solid var(--line)}
 textarea.copy{width:100%;min-height:120px;background:var(--plum);color:var(--veil);border:1px solid var(--line);border-radius:10px;padding:10px;font:13px/1.4 var(--f-body)}
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:40;padding:9px 16px;border-radius:2px;background:var(--veil);color:var(--void);font-size:13px;animation:fade .2s}

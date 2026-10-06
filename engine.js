@@ -15,11 +15,25 @@ export const METERS = {
 export const TRACK_MAX = { untag: 12, gnosis: 12 };
 export const STATS = { steel: 2, wits: 1, shade: 0, freq: -1 };
 export const STAT_LABEL = { steel: "Steel", wits: "Wits", shade: "Shade", freq: "Frequency", fortune: "Fortune" };
+// bonus and risk are the short line under the Masks; use is the guide's "wear it when". Keep all three true
+// to what applyFx, cardCosts, the turn tick and the Light actually do.
 export const MASKS = {
-  bare: { name: "Bare Face", stat: null, bonus: "Hollow recovery ×2", risk: "+1 Strain when a wolf appears" },
-  nyx: { name: "Nyx", stat: "shade", bonus: "+1 Shade", risk: "Dissolution: +1 Strain every 3rd card" },
-  eris: { name: "Eris", stat: "steel", bonus: "+1 Steel", risk: "Isolation: Longing +1 after 4 cards" },
-  lilith: { name: "Lilith", stat: "freq", bonus: "+1 Frequency", risk: "Exposure: Longing rises double" },
+  bare: {
+    name: "Bare Face", stat: null, bonus: "Hollow recovery ×2", risk: "+1 Strain when a wolf appears",
+    use: "Hollow is climbing, or the night is quiet. No stat bonus, and wolves and the Geometry cost Strain. Its own cards trade a little Mark or Strain for Gnosis.",
+  },
+  nyx: {
+    name: "Nyx", stat: "shade", bonus: "+1 Shade", risk: "Dissolution: +1 Strain every 3rd card",
+    use: "Mark is climbing. Shade is hiding, slipping past, listening; it starts at 0. Her cards take Mark off and build Untaggable.",
+  },
+  eris: {
+    name: "Eris", stat: "steel", bonus: "+1 Steel", risk: "Isolation: Longing +1 on the 4th card",
+    use: "Wolves are hunting. Steel is facing things down: your best stat and the most common roll. Her cards set wolves on each other, or throw a party that eases Strain and Longing.",
+  },
+  lilith: {
+    name: "Lilith", stat: "freq", bonus: "+1 Frequency", risk: "Exposure: every Longing rise +1",
+    use: "You're after Gnosis and Longing is low. Frequency is reaching people; it starts at −1, your worst. Her cards pay Gnosis and turn Strain into it. In the Light she cuts both ways: Communion clears 3 Strain, not 2, and the Reckoning adds 4, not 3.",
+  },
 };
 // Bonds: people who catch you once. Each one answers a single kind of ending, then is spent.
 export const BONDS = {

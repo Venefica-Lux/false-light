@@ -1,13 +1,12 @@
 // FALSE LIGHT — UI. Everything that touches the DOM lives here; the rules live in engine.js.
 import {
   newGame, choose, preview, switchMask, maskCost, maskStrain, tutorialPending, currentCard, shareText, vigilNumber, nightsSurvived,
-  cardCosts, resolveStir, endCause, parseChallenge, isWin, bondsEarned, migrate, CARDS, METERS, MASKS, ENDINGS, STAT_LABEL, CARDS_PER_DAY, BONDS,
+  cardCosts, resolveStir, endCause, parseChallenge, isWin, bondsEarned, migrate, CARDS, METERS, MASKS, ENDINGS, STAT_LABEL, STATS, CARDS_PER_DAY, BONDS,
 } from "./engine.js";
 
 // OWNER DECISION: canonical public URLs. PLAY_URL is where shared links point when the page can't see its
-// own address (inside the artifact frame, or opened from a file). It is the current artifact link; it is
-// private until its owner shares it. Replace it when the game has a public home. Empty hides the link.
-const PLAY_URL = "https://claude.ai/artifact/TKHjvrVCk2oX2gcfX59ZSS";
+// own address (inside the artifact frame, or opened from a file): the public site. Empty hides the link.
+const PLAY_URL = "https://venefica-lux.github.io/false-light/";
 const RULEBOOK_URL = "";
 // The soundtrack: VENEFICA LUX's own tracks, shipped beside the page in music/. When they can't load
 // (a single file opened from a phone's file manager), the procedural score below plays instead.
@@ -539,7 +538,29 @@ function buildHud() {
   $("masks").innerHTML = Object.entries(MASKS)
     .map(([k, m]) => `<button class="mask" id="k-${k}" type="button">${svg(MASK_ART[k], 5)}<span class="nm">${m.name.toUpperCase()}</span><span class="cost"></span></button>`)
     .join("");
-  for (const k of Object.keys(MASKS)) $("k-" + k).onclick = () => onMask(k);
+  // Tap wears a Mask; a long press opens the Masks guide instead (and swallows the click that follows it).
+  for (const k of Object.keys(MASKS)) {
+    const b = $("k-" + k);
+    let press = 0;
+    let held = false;
+    const cancel = () => clearTimeout(press);
+    const open = () => {
+      cancel();
+      if (held) return;
+      held = true;
+      buzz(8);
+      masksGuide().then(() => (held = false)); // a keyboard tap later isn't swallowed
+    };
+    b.addEventListener("pointerdown", () => {
+      cancel();
+      held = false;
+      press = setTimeout(open, 550);
+    });
+    ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => b.addEventListener(ev, cancel));
+    // Phones raise contextmenu on a long press (and may cancel the pointer first); a right-click does too.
+    b.addEventListener("contextmenu", (e) => (e.preventDefault(), open()));
+    b.onclick = () => (held ? (held = false) : onMask(k));
+  }
   $("bell").innerHTML = Array.from({ length: CARDS_PER_DAY }, () => "<i></i>").join("");
   const segs = (id, n) => ($(id).querySelector(".segs").innerHTML = "<i></i>".repeat(n));
   segs("t-untag", 12);
@@ -679,7 +700,7 @@ function maskHint(c) {
   if (run.bell !== 0 || run.maskLocked) return;
   const stat = ["left", "right"].map((k) => c[k].roll && c[k].roll.stat).find((st) => MASK_FOR[st] && MASK_FOR[st] !== run.mask);
   if (stat) coach("masks", `${MASKS[MASK_FOR[stat]].name} adds +1 ${STAT_LABEL[stat]}, and this card rolls ${STAT_LABEL[stat]}. Tap a Mask to wear it: free at dawn, Strain after.`);
-  else if (run.day >= 2) coach("masks", "Masks are free to change at dawn. Each adds +1 to one stat and carries a risk. Tap one to wear it.");
+  else if (run.day >= 2) coach("masks", "Masks are free to change at dawn. Each adds +1 to one stat and carries a risk. Long-press one to see what it's for.");
 }
 
 function previewOf(side) {
@@ -1354,15 +1375,16 @@ function howTo() {
     <p><b>Swipe the card</b> left or right (or tap a choice twice). Lit vials and tracks show what a choice will move, never which way. ${SKULL} marks a choice that can end your run.</p>
     <p><b>Four meters.</b> Mark 6: you're Named. Strain 6: you Fracture (3 Favor absorbs one). Favor 0 or Hollow 4 at nightfall: it's over.</p>
     <p><b>Rolls</b> are 2d6 + stat. 10+ clean, 7–9 at a cost, 6− the world moves. Double six is Radiance; snake eyes is Ruin. Hollow 3 rolls three dice and keeps the worst two.</p>
-    <p><b>Masks</b> add +1 to a stat and carry a risk: Nyx Shade, Eris Steel, Lilith Frequency, and the Bare Face heals Hollow twice as fast. Changing is free at dawn, +1 Strain after (+1 more at Hollow 2). Under enough load a Mask can seize you: it holds until nightfall unless you pay +2 Strain to break it.</p>
+    <p><b>Masks</b> add +1 to a stat and carry a risk: Nyx Shade, Eris Steel, Lilith Frequency, and the Bare Face heals Hollow twice as fast. Changing is free at dawn, +1 Strain after (+1 more at Hollow 2). Under enough load a Mask can seize you: it holds until nightfall unless you pay +2 Strain to break it. Long-press a Mask in play, or open the guide below, for what each one is for.</p>
     <p><b>The False Light</b> takes Strain and Hollow away, instantly. While it lasts, Gnosis can't rise. Then the Reckoning comes due, with interest, and putting it off with more Light leaves a tell: Mark +1 a dose.</p>
     <p><b>Bonds</b> are people: the Sister, the Sponsor, the Open Table. Each catches you once, from one kind of ending (Mark, Strain, a bad nightfall), then it's spent. Tap one to see what it saves.</p>
     <p><b>Win</b> one of two ways. Fill UNTAGGABLE and GNOSIS: the Double Crown. Or earn all three Bonds, get a room at the House, and rest through a night: Ordinary Time. Some things you won't see until it's too late to see them.</p>
     <p><b>Masks</b> open their own roads. Wear one and the city shows you cards it shows nobody else.</p>
     <p><b>Vigil</b>: one daily run. Everyone draws from the same seed, and dice never reorder it, but your choices change which cards can appear. Share your result and the link carries the seed and your score. <b>Endless</b>: as many as you like.</p></div>
-    <div class="row"><button class="btn" data-v="tut" type="button">Replay the tutorial next run</button><button class="btn ghost" data-v="ok" type="button">Close</button></div>`,
+    <div class="row"><button class="btn" data-v="masks" type="button">The Masks</button><button class="btn" data-v="tut" type="button">Replay the tutorial next run</button><button class="btn ghost" data-v="ok" type="button">Close</button></div>`,
     { dismiss: false },
   ).then((v) => {
+    if (v === "masks") return masksGuide().then(howTo);
     if (v === "tut") {
       meta.tutorialDone = false;
       meta.hints = {};
@@ -1370,6 +1392,24 @@ function howTo() {
       toast("The next new run starts with the tutorial and its hints.");
     }
   });
+}
+
+// What each Mask is for. Stats come from the engine, so the line can't drift from the rolls.
+function masksGuide() {
+  const sign = (v) => (v < 0 ? "−" : "+") + Math.abs(v);
+  const stats = Object.entries(STATS).map(([k, v]) => `${STAT_LABEL[k]} ${sign(v)}`).join(" · ");
+  const rows = Object.entries(MASKS)
+    .map(([k, m]) => `<div class="mrow${run && !run.over && run.mask === k ? " on" : ""}">${svg(MASK_ART[k], 5)}<p><b>${m.name}</b> · ${m.bonus}. <span class="risk">Cost: ${m.risk}.</span><br>Wear it when ${m.use.charAt(0).toLowerCase()}${m.use.slice(1)}</p></div>`)
+    .join("");
+  return overlay(
+    `<div class="eyebrow">The Masks</div><div class="rules">
+    <p>Rolls are 2d6 + a stat: 10+ clean, 7–9 at a cost. Your stats: <b>${stats}</b>. A Mask adds +1 to one of them, usually around 15 points on your odds. Each choice that rolls shows its odds with the Mask you're wearing.</p>
+    ${rows}
+    <p><b>Changing</b> is free at dawn (the first card of each day), then +1 Strain (+1 more at Hollow 2). Mid-day it's worth paying when the card in front of you rolls a stat another Mask raises and the roll matters. A new Mask starts its clock again: Nyx's third card and Eris's fourth count from when you put it on.</p>
+    <p><b>Seizure.</b> Once a day, with Strain 4+ and another meter near its limit, a Mask can try to answer for you: Eris facing a wolf, Lilith when Longing is high, otherwise Nyx. A clean roll keeps you sovereign (usually +1 Gnosis); 7–9 it stirs (let it, or hold the wheel for 1 Favor); worse, it seizes you until nightfall unless you pay +2 Strain.</p></div>
+    <div class="row"><button class="btn ghost" data-v="ok" type="button">Close</button></div>`,
+    { dismiss: false }, // the finger lifting off a long press must not close it
+  );
 }
 
 function gallery() {
