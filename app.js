@@ -511,18 +511,38 @@ const DANGER_HINT = {
   hollow: (v, m) => `Hollow ${v}/${m}. Full at nightfall and the body gives out.`,
 };
 let coachTimer = null;
-function coach(id, text) {
+let coachId = null;
+let coachHeld = null; // a line cut short by one that can't wait; said again once there's room
+function coach(id, text, first = false) {
   if (meta.hints[id] || !run || $("app").hidden) return;
   const el = $("coach");
-  if (!el.hidden) return; // one at a time; an unshown hint comes back the next time it applies
+  if (!el.hidden) {
+    if (!first) return; // one at a time; an unshown hint comes back the next time it applies
+    // Some hints fire only on a rise (a Bond earned), so the cut-short line is kept, not left to recur.
+    // Unmarked until it's said, so a reload before then still teaches it.
+    coachHeld = { id: coachId, text: el.innerHTML };
+    delete meta.hints[coachId];
+  }
+  coachId = id;
   meta.hints[id] = 1;
   saveMeta();
   el.innerHTML = text; // fixed strings from this file, never card or user text
   el.hidden = false;
   clearTimeout(coachTimer);
-  coachTimer = setTimeout(hideCoach, 5200);
+  coachTimer = setTimeout(() => {
+    hideCoach();
+    coachResume();
+  }, 5200);
+  return true;
 }
-const hideCoach = () => ($("coach").hidden = true);
+function hideCoach() {
+  clearTimeout(coachTimer);
+  $("coach").hidden = true;
+}
+function coachResume() {
+  // Kept until it's actually said: the menu may be open, or the hint may have come round again by itself.
+  if (coachHeld && (meta.hints[coachHeld.id] || coach(coachHeld.id, coachHeld.text))) coachHeld = null;
+}
 
 // ---------- HUD ----------
 function buildHud() {
@@ -709,10 +729,13 @@ function renderCard(deal = true) {
   }
   showPreview(null, 0);
   if (c.art === "sun") sfx.light();
+  // The Light's bargain is said when it's first offered, so the first choice about it is an informed one.
+  if (c.id === "whisper") coach("light", "The Light takes Strain and Hollow away now, and Gnosis can't rise while it lasts. The Reckoning comes after.", true);
+  if ($("coach").hidden) coachResume(); // a line the Light cut short on an earlier card
   if (!c.tutorial) maskHint(c);
   if (previewOf("left").lethal || previewOf("right").lethal) coach("lethal", `${SKULL} marks a choice that can end your run. Drag the card or tap a choice to see the odds.`);
   if (cardCosts(run).length) coach("cost", "Some cards cost you either way. When they do, it's written under the card.");
-  if (!c.tutorial) coach("inspect", "Tap any meter, track or the dots of the Bell to see what it means. Hold a Mask to read it.");
+  if (!c.tutorial && meta.plays >= 1) coach("inspect", "Tap any meter, track or the dots of the Bell to see what it means. Hold a Mask to read it.");
 }
 
 // Masks are taught at a dawn card that rolls a stat some other Mask raises, while changing is still free.
@@ -1081,6 +1104,7 @@ function finish() {
   meta.plays++;
   meta.best = Math.max(meta.best, n);
   if (e.win) meta.crowns++;
+  info.stillOut = nextStillOut(e.win);
   const text = shareText(s, shareUrl());
   if (s.mode === "vigil") meta.vigils[s.seedLabel] = { over: s.over, nights: n, text };
   if (saveMeta()) store.del("fl.run");
@@ -1129,6 +1153,18 @@ const END_LESSON = {
 };
 const segs = (v, n) => `<div class="segs" style="--n:${n}">${Array.from({ length: n }, (_, i) => `<i${i < v ? ' class="on"' : ""}></i>`).join("")}</div>`;
 
+// One ending you haven't found, by its gallery hint, a different one each run: the next thing to go looking for.
+// The wins keep their own progress bars, except on a win's screen, where the other win is the next question.
+// Picked once per ending: the next unfound one after the last named, in a fixed order, so the pool shrinking
+// under it can't land on the same one twice running.
+function nextStillOut(won) {
+  const keys = Object.keys(ENDINGS).filter((k) => (won || !ENDINGS[k].win) && ENDINGS[k].hint);
+  const at = keys.indexOf(meta.lastOut);
+  const k = [...keys.slice(at + 1), ...keys.slice(0, at + 1)].find((x) => !meta.endings[x]);
+  if (k) meta.lastOut = k;
+  return k;
+}
+const stillOut = (k) => (k ? `<p class="stillout">Still out there: <i>${esc(ENDINGS[k].hint)}</i></p>` : "");
 function lesson(s) {
   const k = s.over.startsWith("named") ? "named" : s.over;
   return END_LESSON[k] && (meta.endings[s.over] || 0) <= 3 ? `<p class="lesson">${END_LESSON[k]}</p>` : "";
@@ -1154,9 +1190,10 @@ function endHtml(s, text, info) {
     <p class="endcause">${causeSentence(s)}${e.win ? `${esc(e.title)} on night ${s.day}.` : n === 0 ? "You didn't reach the first nightfall" : `You lasted ${plural(n, "night")}`}${e.win ? "" : info.newBest ? `, <b class="best">your best yet</b>.` : meta.plays > 1 ? `. Your best is ${meta.best}.` : "."}</p>
     ${lesson(s)}
     ${vs}
-    <div class="endact"><button class="btn primary" data-v="again" type="button">Run again</button>
+    <div class="endact"><button class="btn primary" data-v="again" type="button">${s.mode === "vigil" ? "Run again · Endless" : "Run again"}</button>
     <button class="btn" data-v="share" type="button">${s.mode === "vigil" ? "Challenge a friend" : "Share result"}</button></div>
     <div class="collect" aria-label="Endings found">${keys.map((k) => `<i class="${meta.endings[k] ? "on" : ""}${k === s.over && info.firstFind ? " new" : ""}${ENDINGS[k].win ? " win" : ""}"></i>`).join("")}<span>${found} of ${keys.length} endings</span></div>
+    ${stillOut(info.stillOut)}
     ${e.win ? "" : `<div class="crownprog"><div class="eyebrow">Double Crown</div><div><span>Untaggable ${s.untag}/12</span>${segs(s.untag, 12)}</div><div><span>Gnosis ${s.gnosis}/12</span>${segs(s.gnosis, 12)}</div>
     <div class="eyebrow">Ordinary Time</div><div><span>Bonds ${bondsEarned(s)}/3${s.flags.house ? " · a room" : ""}</span>${segs(bondsEarned(s) + (s.flags.house ? 1 : 0), 4)}</div></div>`}
     ${reveal ? `<div class="reveal">${reveal}</div>` : ""}

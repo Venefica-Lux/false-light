@@ -1,5 +1,5 @@
 // FALSE LIGHT — offline cache. `node build.mjs` stamps VERSION and MUSIC with hashes of the files they cache.
-const VERSION = "false-light-8334b25005";
+const VERSION = "false-light-a273b640fe";
 // The soundtrack keeps its own cache, named for the tracks rather than the release, so a code update
 // doesn't throw away (and re-download) 6 MB of music.
 const MUSIC = "false-light-music-6682dce2c2";
