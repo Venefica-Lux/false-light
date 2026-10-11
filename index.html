@@ -162,6 +162,7 @@ body.reckoning .seal i.on{opacity:.1}
 .bond{position:relative;display:grid;place-items:center;width:44px;height:20px;margin:-5px 0;color:var(--veil-faint);opacity:.35;transition:opacity .4s,color .4s}
 .bond::after{content:"";position:absolute;left:0;right:0;top:0;bottom:-24px} /* 44px tall, reaching down, never up into the Gnosis row */
 .bond svg{width:17px;height:17px}
+.tracks{position:relative;z-index:1} /* so a Bond's hit area below its row sits over the prompt, not under it */
 .bond.on{opacity:1;color:var(--gold);filter:drop-shadow(0 0 4px rgba(242,195,92,.45))}
 .bond.spent{opacity:.6;color:var(--veil-dim)}
 .bondcost{color:var(--gold);font-weight:600}
@@ -235,6 +236,7 @@ body.reckoning .seal i.on{opacity:.1}
 .mask svg{width:26px;height:26px}
 .mask .nm{font-family:var(--f-inscr);font-size:10px;letter-spacing:.12em}
 .mask .cost{font-size:10px;color:var(--veil-mute);min-height:13px}
+.mask .cost .ico{width:1.05em;height:1.05em} /* the ☠ on a change that would end the run: text-sized, not a Mask glyph */
 .mask.on{border-color:var(--accent);color:var(--veil);background:color-mix(in srgb, var(--accent) 10%, transparent)}
 .mask.arm{border-color:var(--alert);color:var(--alert)}
 .mask.locked .cost{color:var(--alert)}
@@ -243,6 +245,7 @@ body.reckoning .seal i.on{opacity:.1}
 /* ---------- overlays & other screens ---------- */
 .overlay{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;overflow-y:auto;overscroll-behavior:contain;padding:max(24px,env(safe-area-inset-top,0px)) 16px max(24px,env(safe-area-inset-bottom,0px));background:rgba(8,6,9,.9);backdrop-filter:blur(6px);text-align:center;animation:fade .4s ease}
 @keyframes fade{from{opacity:0}}
+.overlay.arming [data-v]{pointer-events:none} /* its first 300 ms: a tap meant for what was underneath can't answer it */
 .overlay .inner{max-width:420px;width:100%;margin:auto;display:grid;gap:14px;justify-items:center}
 .big{font-family:var(--f-display);font-weight:600;font-size:clamp(38px,11vw,56px);line-height:1;margin:0;text-wrap:balance}
 .eyebrow{font-family:var(--f-inscr);letter-spacing:.16em;font-size:11px;color:var(--gold);text-transform:uppercase}
@@ -336,7 +339,7 @@ textarea.copy{width:100%;min-height:120px;background:var(--plum);color:var(--vei
 .overlay.won .big{color:var(--sun);text-shadow:0 0 28px rgba(242,195,92,.5)}
 .overlay.won .line{color:var(--veil)}
 .overlay.won::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(70% 45% at 50% 0%,rgba(242,195,92,.22),transparent 70%)}
-.track.stalled .segs i.on{background:var(--veil-faint)}
+.track.stalled .segs i.on,#t-gnosis.stalled .segs i.on{background:var(--veil-faint)}
 .track.stalled .tl{text-decoration:line-through;text-decoration-color:rgba(242,195,92,.6)}
 .endcause b{color:var(--veil);font-weight:600}.endcause .best{color:var(--sun)}
 .vs{margin:0;font-size:14px;color:var(--veil)}.vs b{color:var(--sun)}
@@ -405,6 +408,9 @@ textarea.copy{width:100%;min-height:120px;background:var(--plum);color:var(--vei
   .what span{font-size:12.5px}
   .hook{font-size:17px}
 }
+/* Narrower than 360 CSS px (a small phone, or zoom / display size): the Bonds wrap under Longing's pips rather
+   than leave the screen with the track numbers. */
+@media (max-width:359px){.lrow{flex-wrap:wrap;row-gap:2px}.bonds{flex-wrap:wrap;row-gap:4px}.bond{margin:0}} /* no negative margin: wrapped Bonds mustn't overlap */
 @media (max-height:620px){
   :root{--card-min:160px;--chrome:426px}
 }
@@ -442,7 +448,7 @@ textarea.copy{width:100%;min-height:120px;background:var(--plum);color:var(--vei
       <div class="art" id="art"></div>
       <div class="numeral" id="numeral"></div>
       <div class="tier" id="tier"></div>
-      <div class="choice" id="choice"></div>
+      <div class="choice" id="choice" aria-hidden="true"></div>
     </div>
   </div>
   <div class="coach" id="coach" role="status" hidden></div>

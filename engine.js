@@ -10,7 +10,7 @@ export const METERS = {
   mark: { max: 6, label: "Mark", hint: "The Warden's eye: how much they've noticed. At 6 you are Named." },
   strain: { max: 6, label: "Strain", hint: "The weight on the soul. At 6 you Fracture, unless 3 Favor takes the hit. Each night takes 1 off, 2 if you rested." },
   favor: { max: 6, label: "Favor", hint: "Coin, doors, allies. Empty at nightfall and you're Destitute." },
-  hollow: { max: 4, label: "Hollow", hint: "The body's ledger. Each night without rest adds 1. Full at nightfall and it closes." },
+  hollow: { max: 4, label: "Hollow", hint: "The body's ledger. Each night without rest adds 1. From 2, every Strain cost is 1 higher. Full at nightfall and it closes." },
 };
 export const TRACK_MAX = { untag: 12, gnosis: 12 };
 export const STATS = { steel: 2, wits: 1, shade: 0, freq: -1 };
@@ -286,15 +286,20 @@ function applyFx(s, fx, notes) {
         reckon(s, delta, notes);
         break;
       case "set":
+        if (v.house && !s.flags.house) notes.push("A room at the House. It counts toward Ordinary Time.");
         Object.assign(s.flags, v);
         break;
       case "unset":
-        for (const f of [].concat(v)) delete s.flags[f];
+        for (const f of [].concat(v)) {
+          if (f === "house" && s.flags.house) notes.push("The room at the House is gone.");
+          delete s.flags[f];
+        }
         break;
       case "bond":
         if (BONDS[v] && !s.bonds.includes(v) && !(s.spent || []).includes(v)) {
           s.bonds.push(v);
-          notes.push(`Bond: ${BONDS[v].name}. ${BONDS[v].hint.split(": ")[1]}`);
+          const what = BONDS[v].hint.split(": ")[1];
+          notes.push(`Bond: ${BONDS[v].name}. ${what.charAt(0).toUpperCase()}${what.slice(1)}`);
         }
         break;
       case "then":
@@ -384,11 +389,12 @@ export function cardCosts(s) {
   const out = [];
   if (!c || c.tutorial || s.over) return out;
   const tax = s.hollow >= 2 ? 1 : 0;
-  if (s.mask === "bare" && c.tier >= 2) out.push({ id: "wolf", text: `Bare-faced before a wolf: +${1 + tax} Strain either way` });
-  if (s.mask === "nyx" && (s.maskAge + 1) % 3 === 0) out.push({ id: "nyx", text: `Nyx dissolves you: +${1 + tax} Strain this card` });
-  if (s.mask === "eris" && s.maskAge + 1 === 4) out.push({ id: "eris", text: "Eris isolates you: Longing +1 this card" });
-  if (s.communion === 1 && c.id !== "whisper" && c.id !== "reckoning") out.push({ id: "fading", text: "The Light is fading. The Reckoning comes next" });
-  if (s.bell === CARDS_PER_DAY - 1 && !s.restedToday) out.push({ id: "night", text: "Nightfall after this card: Hollow +1, no rest today" });
+  // short: the same fact when the line under the card has to hold more than one.
+  if (s.mask === "bare" && c.tier >= 2) out.push({ id: "wolf", text: `Bare-faced before a wolf: +${1 + tax} Strain either way`, short: `Wolf, bare-faced: +${1 + tax} Strain` });
+  if (s.mask === "nyx" && (s.maskAge + 1) % 3 === 0) out.push({ id: "nyx", text: `Nyx dissolves you: +${1 + tax} Strain this card`, short: `Nyx: +${1 + tax} Strain` });
+  if (s.mask === "eris" && s.maskAge + 1 === 4) out.push({ id: "eris", text: "Eris isolates you: Longing +1 this card", short: "Eris: Longing +1" });
+  if (s.communion === 1 && c.id !== "whisper" && c.id !== "reckoning") out.push({ id: "fading", text: "The Light is fading. The Reckoning comes next", short: "Reckoning next" });
+  if (s.bell === CARDS_PER_DAY - 1 && !s.restedToday) out.push({ id: "night", text: "Nightfall after this card: Hollow +1, no rest today", short: "Nightfall: Hollow +1" });
   return out;
 }
 
@@ -462,13 +468,20 @@ export function choose(s, side, opts = {}) {
     if (s.cage >= 3) applyFx(s, { cage: 1 }, []); // a Cage already biting compounds
     s.dayMarks.push("cascade");
   }
-  if (was && !s.cascade) applyFx(s, { gnosis: 1 }, notes), notes.push("The pressure eases. Governance: Gnosis +1.");
+  if (was && !s.cascade) {
+    const g = s.gnosis;
+    applyFx(s, { gnosis: 1 }, notes);
+    notes.push(s.gnosis > g ? "The pressure eases. Governance: Gnosis +1." : "The pressure eases.");
+  }
 
   if (s.mark >= 5 || s.strain >= 5) s.dayMarks.push("edge");
 
   checkEnd(s, card, notes, {});
   if (s.over) s.endBy = s.endBy || card.id;
 
+  // The board as this card left it, before the night and the next draw: what the HUD shows under the card's
+  // slip, so a day's last card isn't credited with the night, nor any card with the next card's Activation.
+  const board = { ...s, bell: s.over ? s.bell : s.bell + 1, bonds: [...s.bonds], spent: [...(s.spent || [])], flags: { ...s.flags } };
   let nightfall = null;
   if (!s.over) {
     s.bell++;
@@ -484,7 +497,7 @@ export function choose(s, side, opts = {}) {
   const delta = measure(); // before the next draw, whose Activation roll is reported separately
   if (!s.over) draw(s);
   else if (!nightfall) closeDay(s); // night() already closed the day it ended on
-  return { side, label: ch.label, roll, delta, text, notes, ending: s.over, nightfall, card: card.id, event: s.lastEvent, spent: spentNow() };
+  return { side, label: ch.label, roll, delta, text, notes, ending: s.over, nightfall, card: card.id, event: s.lastEvent, spent: spentNow(), board };
 }
 
 export function accelerants(s, card) {
@@ -727,8 +740,11 @@ export function parseChallenge(hash, today) {
   const m = /^#?vigil-(\d{4}-\d{2}-\d{2})(?:-n(\d{1,3})(?:-([a-z_]+))?)?$/.exec(String(hash || ""));
   if (!m) return null;
   const date = m[1];
-  if (Number.isNaN(Date.parse(date + "T00:00:00Z")) || date < LAUNCH_DAY || date > today) return null;
-  return { date, nights: m[2] === undefined ? null : Number(m[2]), ending: m[3] && ENDINGS[m[3]] ? m[3] : null };
+  const t = Date.parse(date + "T00:00:00Z");
+  // A real calendar date (Date.parse rolls 09-31 over to 10-01), and an ending of the game's own, not an inherited key.
+  if (Number.isNaN(t) || new Date(t).toISOString().slice(0, 10) !== date || date < LAUNCH_DAY || date > today) return null;
+  const ending = m[3] && Object.prototype.hasOwnProperty.call(ENDINGS, m[3]) ? m[3] : null;
+  return { date, nights: m[2] === undefined ? null : Number(m[2]), ending };
 }
 
 const DAY_EMOJI = { purple: "🟪", red: "🟥", gold: "🟨", radiance: "✨", end: "⬛", crown: "👑" };

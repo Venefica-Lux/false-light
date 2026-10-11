@@ -104,9 +104,12 @@ const inFrame = (() => {
 
 const saveMeta = () => store.set("fl.meta", meta);
 const saveRun = () => (run && !run.over ? store.set("fl.run", run) : store.del("fl.run"));
-const todayISO = () => {
+const localISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const todayISO = () => localISO(new Date());
+const tomorrowISO = () => {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  d.setDate(d.getDate() + 1);
+  return localISO(d);
 };
 // A hosted copy links to itself; the artifact frame and file:// fall back to PLAY_URL.
 const shareUrl = () => (!inFrame && /^https?:$/.test(location.protocol) && !/^(localhost|127\.)/.test(location.hostname) ? location.origin + location.pathname : PLAY_URL);
@@ -503,7 +506,9 @@ const buzz = (p) => {
 };
 
 // ---------- coaching: one line, once, at the moment it matters ----------
-const HINTS = ["dots", "roll", "lethal", "cost", "masks", "danger", "goal", "bond", "light", "inspect", "night", "activation"];
+// The basics: a player with 3+ runs has met these and isn't taught them again. Lines tied to an event (the first
+// Light, Activation, Bond, nightfall) aren't here: they're said the first time it happens, however many runs in.
+const HINTS = ["dots", "roll", "lethal", "cost", "masks", "danger", "goal", "inspect"];
 const DANGER_HINT = {
   mark: (v, m) => `Mark ${v}/${m}. At 6 you're Named.`,
   strain: (v, m) => `Strain ${v}/${m}. At 6 you Fracture.`,
@@ -554,12 +559,13 @@ function buildHud() {
         <span class="lbl">${m.label.toUpperCase()}</span><span class="num"></span></button>`,
     )
     .join("");
-  for (const [k, m] of Object.entries(METERS)) $("m-" + k).onclick = () => run && toast(`${m.label} ${run[k]}/${m.max}. ${m.hint}`);
+  // Taps read the board as drawn (under a slip, the card's own result), never a night that hasn't been shown yet.
+  for (const [k, m] of Object.entries(METERS)) $("m-" + k).onclick = () => run && toast(`${m.label} ${board()[k]}/${m.max}. ${m.hint}`);
   // Every track and the Bell answer a tap the same way the meters do: what it is, where it stands, what it does.
   for (const [k, id] of Object.entries(TRACK_EL)) {
-    $(id).onclick = (e) => run && !e.target.closest(".bond") && toast(TRACK_INFO[k](run));
+    $(id).onclick = (e) => run && !e.target.closest(".bond") && toast(TRACK_INFO[k](board()));
   }
-  $("bell").onclick = () => run && toast(bellInfo(run));
+  $("bell").onclick = () => run && toast(bellInfo(board()));
   $("masks").innerHTML = Object.entries(MASKS)
     .map(([k, m]) => `<button class="mask" id="k-${k}" type="button">${svg(MASK_ART[k], 5)}<span class="nm">${m.name.toUpperCase()}</span><span class="cost"></span></button>`)
     .join("");
@@ -593,7 +599,15 @@ function buildHud() {
   segs("t-cage", 8);
   $("t-longing").querySelector(".pips").innerHTML = "<i></i>".repeat(4);
   $("bonds").innerHTML = Object.entries(BONDS).map(([k, b]) => `<button class="bond" id="b-${k}" type="button" aria-label="${b.name}">${svg(BOND_ART[k], 6)}</button>`).join("");
-  for (const [k, b] of Object.entries(BONDS)) $("b-" + k).onclick = () => toast(b.hint);
+  for (const k of Object.keys(BONDS)) $("b-" + k).onclick = () => toast(bondInfo(k));
+}
+// A Bond's tap: held, spent or not yet earned (the icon says so only by its opacity), what it saves, and the room at
+// the House, the one Ordinary Time condition with no mark of its own on the board.
+function bondInfo(k) {
+  const b = BONDS[k];
+  const s = run && board();
+  const state = !s ? "" : s.bonds.includes(k) ? ", held" : (s.spent || []).includes(k) ? ", spent" : ", not yet earned";
+  return `${b.name}${state}: ${b.hint.split(": ").slice(1).join(": ")}${s && s.flags.house ? " You have a room at the House." : ""}`;
 }
 
 // A number that rises off the vial or track that just changed: the result, where you're already looking.
@@ -609,6 +623,9 @@ function floatDelta(anchor, k, v) {
 }
 
 let lastVals = {};
+// What the HUD last drew: the run, or under a slip the card's own board. Taps and the Masks guide read this.
+let drawn = null;
+const board = () => drawn || run;
 let previews = {};
 const TRACK_EL = { untag: "t-untag", gnosis: "t-gnosis", longing: "t-longing", cage: "t-cage" };
 const TRACK_SIZE = { untag: 12, gnosis: 12, longing: 4, cage: 8 };
@@ -623,8 +640,9 @@ const TRACK_INFO = {
 };
 const bellInfo = (s) =>
   `The Bell: card ${Math.min(s.bell + 1, CARDS_PER_DAY)} of ${CARDS_PER_DAY} today. After card ${CARDS_PER_DAY}, nightfall: no Favor or a full Hollow ends the run, and a night without rest adds Hollow.`;
-function renderHud() {
-  const s = run;
+// view: a board to show instead of the run (the card's own result, under its slip; see commit()).
+function renderHud(view = null) {
+  const s = (drawn = view || run);
   previews = {};
   for (const [k, m] of Object.entries(METERS)) {
     const el = $("m-" + k);
@@ -642,14 +660,6 @@ function renderHud() {
     if (danger && lastVals[k] !== undefined) coach("danger", DANGER_HINT[k](s[k], m.max));
     lastVals[k] = s[k];
   }
-  for (const [k, id] of Object.entries(TRACK_EL)) {
-    if (k === "cage" && !s.cageSeen) continue;
-    if (lastVals[k] !== undefined && lastVals[k] !== s[k]) {
-      floatDelta($(id).querySelector(".n"), k, s[k] - lastVals[k]);
-      if ((k === "untag" || k === "gnosis") && s[k] > lastVals[k]) coach("goal", "Fill both UNTAGGABLE and GNOSIS and you win. That's the Double Crown.");
-    }
-    lastVals[k] = s[k];
-  }
   const fill = (id, v, max) => {
     $(id).querySelectorAll(".segs i,.pips i").forEach((i, n) => i.classList.toggle("on", n < v));
     $(id).querySelector(".n").textContent = `${v}/${max}`;
@@ -665,6 +675,15 @@ function renderHud() {
   if (s.communion > 0) coach("light", "In the Light, Strain and Hollow fall away and Gnosis can't rise. The Reckoning comes after.");
   $("t-cage").hidden = !s.cageSeen;
   if (s.cageSeen) fill("t-cage", s.cage, 8);
+  // After fill(), which rewrites each number and would take a float with it.
+  for (const [k, id] of Object.entries(TRACK_EL)) {
+    if (k === "cage" && !s.cageSeen) continue;
+    if (lastVals[k] !== undefined && lastVals[k] !== s[k]) {
+      floatDelta($(id).querySelector(".n"), k, s[k] - lastVals[k]);
+      if ((k === "untag" || k === "gnosis") && s[k] > lastVals[k]) coach("goal", "Fill both UNTAGGABLE and GNOSIS and you win. That's the Double Crown.");
+    }
+    lastVals[k] = s[k];
+  }
   for (const k of Object.keys(BONDS)) {
     const b = $("b-" + k);
     const spent = (s.spent || []).includes(k);
@@ -697,7 +716,9 @@ function renderHud() {
   document.body.classList.toggle("communion", s.communion > 0);
   document.body.classList.toggle("reckoning", s.reckoning > 0 && s.communion === 0);
   document.body.classList.toggle("cascade", !!s.cascade);
-  setMood(runMood(s));
+  // The score follows the run, not the board: the Light's sour tail plays as the Reckoning is dealt, under the slip
+  // of the card that ended the Light, as it always has.
+  setMood(runMood(run));
 }
 
 function renderCard(deal = true) {
@@ -711,15 +732,9 @@ function renderCard(deal = true) {
   $("tier").textContent = c.tutorial ? "first light" : TIER[c.tier] || "";
   $("go-left").innerHTML = "◀ " + esc(c.left.label);
   $("go-right").innerHTML = esc(c.right.label) + " ▶";
-  for (const side of ["left", "right"]) {
-    const p = previewOf(side);
-    const b = $(side === "left" ? "go-left" : "go-right");
-    b.classList.toggle("lethal", !!p.lethal);
-    b.classList.toggle("crown", !!p.crown);
-    b.title = p.lethal ? "Can end your run" : p.crown ? "Can win the run" : "";
-    b.setAttribute("aria-label", c[side].label + (p.lethal ? `. Can end your run, ${pct(p.lethal.p)}` : p.crown ? `. Can win the run, ${pct(p.crown.p)}` : ""));
-  }
+  refreshChoices();
   const card = $("card");
+  armedSide = null; // a choice armed on another card, or in another run, isn't this one's
   card.style.transform = "";
   card.style.opacity = "";
   if (deal) {
@@ -736,6 +751,34 @@ function renderCard(deal = true) {
   if (previewOf("left").lethal || previewOf("right").lethal) coach("lethal", `${SKULL} marks a choice that can end your run. Drag the card or tap a choice to see the odds.`);
   if (cardCosts(run).length) coach("cost", "Some cards cost you either way. When they do, it's written under the card.");
   if (!c.tutorial && meta.plays >= 1) coach("inspect", "Tap any meter, track or the dots of the Bell to see what it means. Hold a Mask to read it.");
+}
+
+// The ☠ and crown flags on the two choices, from the preview. Called again after a Mask change, which can
+// change both.
+function refreshChoices() {
+  const c = currentCard(run);
+  for (const side of ["left", "right"]) {
+    const p = previewOf(side);
+    const b = $(side === "left" ? "go-left" : "go-right");
+    b.classList.toggle("lethal", !!p.lethal);
+    b.classList.toggle("crown", !!p.crown);
+    b.title = p.lethal ? "Can end your run" : p.crown ? "Can win the run" : "";
+    b.setAttribute("aria-label", c[side].label + spokenPreview(p));
+  }
+}
+// What the lit vials and the odds line show a sighted player, said in the choice's name: which meters and tracks
+// move (never which way), the roll's odds, a Bond it may spend, and whether it can end or win the run.
+const SPOKEN = { mark: "Mark", strain: "Strain", favor: "Favor", hollow: "Hollow", longing: "Longing", untag: "Untaggable", gnosis: "Gnosis", cage: "the Cage" };
+function spokenPreview(p) {
+  const list = (xs) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+  const moved = [...p.meters, ...p.tracks].map((k) => SPOKEN[k]);
+  const out = [];
+  if (p.lethal) out.push(`Can end your run, ${pct(p.lethal.p)}`);
+  if (p.crown) out.push(`Can win the run, ${pct(p.crown.p)}`); // both, when both: the odds line shows both
+  if (moved.length) out.push(`Moves ${list(moved)}`);
+  if (p.roll) out.push(`${STAT_LABEL[p.roll.stat]} roll: ${pct(p.roll.hit)} clean, ${pct(p.roll.mid)} at a cost, ${pct(p.roll.miss)} worse`);
+  for (const bd of p.bonds || []) out.push(bd.p >= 0.999 ? `Spends ${BONDS[bd.k].name}` : `${pct(bd.p)} to spend ${BONDS[bd.k].name}`);
+  return out.map((x) => ". " + x).join("");
 }
 
 // Masks are taught at a dawn card that rolls a stat some other Mask raises, while changing is still free.
@@ -776,13 +819,21 @@ function oddsLine(p) {
   }
   return parts.join(" · ");
 }
+// The line under the card is one line. Alone, a fact gets its full sentence; two or more share it in their short
+// forms, the clocks first (the Light's, the Reckoning's, nightfall's). Two always fit; when three meet on a narrow
+// phone, what runs off the end is a Mask's cost, which the lit vials and tracks still show.
+const IDLE_ORDER = ["light", "fading", "night", "rested", "wolf", "nyx", "eris"];
 function idleLine() {
-  const lines = cardCosts(run).map((c) => `<span class="costline">${esc(c.text)}</span>`);
+  const parts = cardCosts(run).map((c) => ({ ...c, cls: "costline" }));
   // State that runs on a clock the board doesn't otherwise show.
   const c = currentCard(run);
-  if (run.communion > 1 && c.id !== "whisper" && c.id !== "reckoning") lines.push(`<span class="statusline">In the Light · ${run.communion} cards left, then the Reckoning</span>`);
-  if (run.bell === CARDS_PER_DAY - 1 && run.restedToday && !c.tutorial) lines.push(`<span class="statusline">Nightfall after this card. You rested today</span>`);
-  return lines.join(" · ");
+  if (run.communion > 1 && c.id !== "whisper" && c.id !== "reckoning")
+    parts.push({ id: "light", cls: "statusline", text: `In the Light · ${run.communion} cards left, then the Reckoning`, short: `Light: ${run.communion} cards left` });
+  if (run.bell === CARDS_PER_DAY - 1 && run.restedToday && !c.tutorial)
+    parts.push({ id: "rested", cls: "statusline", text: "Nightfall after this card. You rested today", short: "Nightfall: rested" });
+  const many = parts.length > 1;
+  if (many) parts.sort((a, b) => IDLE_ORDER.indexOf(a.id) - IDLE_ORDER.indexOf(b.id));
+  return parts.map((p) => `<span class="${p.cls}">${esc(many ? p.short : p.text)}</span>`).join(" · ");
 }
 
 function showPreview(side, strength) {
@@ -839,17 +890,16 @@ function bindSwipe() {
   };
   card.addEventListener("pointerup", end);
   card.addEventListener("pointercancel", end);
-  let armed = null;
   const tapChoice = (side) => {
     if (busy) return;
     // First tap previews (like a half-swipe); second tap commits.
-    if (armed !== side) {
-      armed = side;
+    if (armedSide !== side) {
+      armedSide = side;
       card.style.transform = `translateX(${side === "left" ? -46 : 46}px) rotate(${side === "left" ? -3 : 3}deg)`;
       showPreview(side, 1);
       return;
     }
-    armed = null;
+    armedSide = null;
     commit(side);
   };
   $("go-left").onclick = () => tapChoice("left");
@@ -859,12 +909,21 @@ function bindSwipe() {
     if (e.key === "ArrowLeft") tapChoice("left");
     if (e.key === "ArrowRight") tapChoice("right");
   });
-  card.addEventListener("pointerdown", () => (armed = null));
+  card.addEventListener("pointerdown", () => (armedSide = null));
+}
+// The choice a first tap (or ←/→) has armed. Anything that changes what it would do disarms it, so the second
+// tap never commits on a preview that's out of date.
+let armedSide = null;
+function disarm() {
+  armedSide = null;
+  $("card").style.transform = "";
+  showPreview(null, 0);
 }
 
 async function commit(side) {
   if (busy || !run || run.over) return;
   busy = true;
+  disarmMask(); // its cost and ☠ were read before this card; the next tap reads them again
   const card = $("card");
   const dir = side === "left" ? -1 : 1;
   card.style.transform = `translateX(${dir * 140}%) rotate(${dir * 24}deg)`;
@@ -875,14 +934,18 @@ async function commit(side) {
   sfx.swipe();
   buzz(10);
   const res = choose(run, side);
-  saveRun();
+  // A run that ends is recorded now, before its slip: closing the page on the slip can't take the result back
+  // (or hand back a spent Vigil).
+  if (res.ending) record();
+  else saveRun();
   // The tutorial counts as done only once its last card has resolved, not when the run starts.
   if (!meta.tutorialDone && run.tutorial && !tutorialPending(run)) {
     meta.tutorialDone = true;
     saveMeta();
   }
   await wait(220);
-  renderHud();
+  // Under the slip, the board as the card left it: the night and the next Activation show on their own screens.
+  renderHud(res.ending ? null : res.board);
   if (res.roll) sfx.dice();
   if (res.notes.some((n) => n.startsWith("Communion"))) sfx.light();
   await slip(res);
@@ -953,7 +1016,9 @@ function slip(res) {
       document.removeEventListener("keydown", key);
       resolve();
     };
-    const key = (e) => (e.key === "Enter" || e.key === " " || e.key.startsWith("Arrow")) && done();
+    // The key that closes the slip is spent here: without preventDefault its keypress would press whatever the
+    // next dialog focuses (Run again on an end screen, Let it answer on a stir).
+    const key = (e) => (e.key === "Enter" || e.key === " " || e.key.startsWith("Arrow")) && (e.preventDefault(), done());
     setTimeout(() => {
       el.addEventListener("click", done);
       document.addEventListener("keydown", key);
@@ -961,38 +1026,56 @@ function slip(res) {
   });
 }
 
+// While a dialog is open, the screen behind it takes no focus and leaves the accessibility tree: Tab stays inside
+// the dialog, and Enter can't start a run hidden under it.
+function backdrop() {
+  const open = !!$("layer").childElementCount;
+  for (const id of ["app", "home"]) $(id).toggleAttribute("inert", open);
+}
 function overlay(html, { dismiss = true, cls = "" } = {}) {
   return new Promise((resolve) => {
     const back = document.activeElement;
     const el = document.createElement("div");
-    el.className = "overlay" + (cls ? " " + cls : "");
+    // Arming: for its first 300 ms a dialog's buttons don't take a tap or a click, so the second half of a double tap
+    // meant for what was underneath can't answer it unseen (a held key's repeats are refused in key() below).
+    el.className = "overlay arming" + (cls ? " " + cls : "");
     el.setAttribute("role", "dialog");
     el.setAttribute("aria-modal", "true");
     el.tabIndex = -1;
     el.innerHTML = `<div class="inner">${html}</div>`;
-    const title = el.querySelector(".big,.eyebrow");
+    // Named by its heading (the ending, "Night 2 ends"), or its eyebrow when it has none.
+    const title = el.querySelector(".big") || el.querySelector(".eyebrow");
     if (title) el.setAttribute("aria-label", title.textContent);
     $("layer").appendChild(el);
+    backdrop();
     (el.querySelector("button:not([disabled])") || el).focus({ preventScroll: true });
     let armed = false;
     const key = (e) => {
-      if (!armed || el.parentNode !== $("layer") || $("layer").lastElementChild !== el) return;
+      if (el.parentNode !== $("layer") || $("layer").lastElementChild !== el) return;
+      // A held key's repeats never press a button here: only a fresh press does.
+      if (e.repeat && (e.key === "Enter" || e.key === " ")) return e.preventDefault();
+      if (!armed) return;
       if (dismiss && (e.key === "Enter" || e.key === " " || e.key === "Escape")) e.preventDefault(), close();
+      else if (e.key === "Escape" && el.querySelector('[data-v="ok"]')) e.preventDefault(), close("ok"); // a dialog with a Close
     };
     const close = (v) => {
       el.remove();
       document.removeEventListener("keydown", key);
+      backdrop();
       if (back && back.isConnected && !$("layer").childElementCount) back.focus({ preventScroll: true });
       resolve(v);
     };
     el._close = close;
     document.addEventListener("keydown", key);
-    setTimeout(() => (armed = true), 300);
+    setTimeout(() => {
+      armed = true;
+      el.classList.remove("arming");
+    }, 300);
     if (dismiss) setTimeout(() => el.addEventListener("click", () => close()), 300);
     el.querySelectorAll("[data-v]").forEach((b) =>
       b.addEventListener("click", (e) => {
         e.stopPropagation();
-        close(b.dataset.v);
+        if (armed) close(b.dataset.v);
       }),
     );
   });
@@ -1063,6 +1146,10 @@ function setSeal(k) {
   if (flare) setTimeout(() => document.querySelectorAll("#seal i.flare").forEach((i) => i.classList.remove("flare")), 650);
 }
 let armedMask = null;
+function disarmMask() {
+  armedMask = null;
+  document.querySelectorAll(".mask.arm").forEach((b) => b.classList.remove("arm"));
+}
 function onMask(k) {
   if (busy || !run || run.over || run.mask === k || run.stir) return;
   const cost = maskStrain(run, k);
@@ -1071,7 +1158,11 @@ function onMask(k) {
     armedMask = k;
     const b = $("k-" + k);
     b.classList.add("arm");
-    b.querySelector(".cost").textContent = `tap: +${cost} strain`;
+    // A change that would Fracture you is flagged like any other choice that ends the run.
+    const ends = switchMask(JSON.parse(JSON.stringify(run)), k).ending;
+    // (With the skull, "+N" alone: "+N strain" was the label a tap ago, and the longer line wraps the chip.)
+    b.querySelector(".cost").innerHTML = ends ? `${SKULL} tap: +${cost}` : `tap: +${cost} strain`;
+    b.setAttribute("aria-label", `${MASKS[k].name}: press again to wear it for ${cost} Strain${ends ? ". It ends your run" : ""}.`);
     setTimeout(() => {
       if (armedMask === k) {
         armedMask = null;
@@ -1087,16 +1178,21 @@ function onMask(k) {
   buzz(8);
   saveRun();
   renderHud();
-  if (r.notes && r.notes.length) toast(r.notes.join(" "));
-  if (r.ending) finish();
-  else toast(`${MASKS[k].name}: ${MASKS[k].bonus}`);
+  if (r.ending) return finish();
+  // The new Mask changes the odds, the costs and what can kill you: the card says so before the next tap.
+  refreshChoices();
+  disarm();
+  // One toast: what the change cost beyond its Strain (a Fracture absorbed, a Bond spent), then what it gives.
+  toast([...(r.notes || []), `${MASKS[k].name}: ${MASKS[k].bonus}`].join(" "));
 }
 
 // ---------- endings ----------
-function finish() {
-  busy = true;
-  hideCoach();
+// A run that just ended is booked once, the moment it ends (commit() calls this before the slip), not when its
+// end screen opens: the end screen reads what was booked.
+let recorded = null;
+function record() {
   const s = run;
+  if (recorded && recorded.s === s) return recorded;
   const e = ENDINGS[s.over];
   const n = nightsSurvived(s);
   const info = { firstFind: !meta.endings[s.over], newBest: meta.plays > 0 && n > meta.best };
@@ -1109,6 +1205,14 @@ function finish() {
   if (s.mode === "vigil") meta.vigils[s.seedLabel] = { over: s.over, nights: n, text };
   if (saveMeta()) store.del("fl.run");
   else store.set("fl.run", s); // keep the completed attempt recoverable
+  return (recorded = { s, text, info });
+}
+function finish() {
+  busy = true;
+  hideCoach();
+  document.querySelectorAll(".toast").forEach((t) => t.remove());
+  const { s, text, info } = record();
+  const e = ENDINGS[s.over];
   setMood(e.win ? "light" : "end");
   e.win ? sfx.light() : sfx.end();
   buzz(e.win ? [20, 30, 20, 30, 60] : info.firstFind ? [40, 60, 90] : [80]);
@@ -1141,7 +1245,9 @@ function causeSentence(s) {
 // The counter to a death, said plainly after it. Rules only: every line is something the engine does.
 const END_LESSON = {
   named: "Mark comes down when you change your routine, lie low, or take a stair nobody's mapped. The Sister hides you once.",
-  fracture: "3 Favor in the purse absorbs one Fracture, and the Sponsor catches another. Rested nights take Strain off.",
+  // A Naming the Reckoning delivered: its Mark, not the routine, is what to read next time.
+  named_reckoning: "The Reckoning costs a Mark whichever way you answer, and More light only puts it off, a Mark at a time. Meet it below Mark 5.",
+  fracture: "3 Favor in the purse absorbs one Fracture, and the Sponsor catches another. From Hollow 2 up, every Strain cost is 1 higher.",
   fracture_reckoning: "The Reckoning lands 3 Strain at once, 4 once the Light is a habit. Meet it with Strain low.",
   destitute: "The Bell wants at least 1 Favor in the purse. The Open Table catches one bad night.",
   collapse: "Hollow rises every night you don't rest. Sleep, the Sabbath and a meal bring it down, twice as fast bare-faced.",
@@ -1156,9 +1262,13 @@ const segs = (v, n) => `<div class="segs" style="--n:${n}">${Array.from({ length
 // One ending you haven't found, by its gallery hint, a different one each run: the next thing to go looking for.
 // The wins keep their own progress bars, except on a win's screen, where the other win is the next question.
 // Picked once per ending: the next unfound one after the last named, in a fixed order, so the pool shrinking
-// under it can't land on the same one twice running.
+// under it can't land on the same one twice running. The order mixes the kinds of ending and puts the plain meter
+// deaths, which find a player anyway, last: a first session's questions aren't six Namings in a row.
+const STILL_OUT = ["cage", "named_hunt", "fracture_reckoning", "billet", "named_zealot", "rex", "corner", "named_scout", "flag", "named_darvo", "named_clerk", "collapse", "destitute", "fracture", "named"];
 function nextStillOut(won) {
-  const keys = Object.keys(ENDINGS).filter((k) => (won || !ENDINGS[k].win) && ENDINGS[k].hint);
+  const other = won && Object.keys(ENDINGS).find((k) => ENDINGS[k].win && !meta.endings[k]);
+  if (other) return other;
+  const keys = [...STILL_OUT, ...Object.keys(ENDINGS).filter((k) => !STILL_OUT.includes(k))].filter((k) => ENDINGS[k] && !ENDINGS[k].win && ENDINGS[k].hint);
   const at = keys.indexOf(meta.lastOut);
   const k = [...keys.slice(at + 1), ...keys.slice(0, at + 1)].find((x) => !meta.endings[x]);
   if (k) meta.lastOut = k;
@@ -1166,7 +1276,7 @@ function nextStillOut(won) {
 }
 const stillOut = (k) => (k ? `<p class="stillout">Still out there: <i>${esc(ENDINGS[k].hint)}</i></p>` : "");
 function lesson(s) {
-  const k = s.over.startsWith("named") ? "named" : s.over;
+  const k = s.over.startsWith("named") ? (s.endBy === "reckoning" ? "named_reckoning" : "named") : s.over;
   return END_LESSON[k] && (meta.endings[s.over] || 0) <= 3 ? `<p class="lesson">${END_LESSON[k]}</p>` : "";
 }
 // Order is the loop: what happened → why → go again / dare a friend → what you're collecting → what was hidden.
@@ -1187,7 +1297,7 @@ function endHtml(s, text, info) {
   return `<div class="eyebrow">${s.mode === "vigil" ? `Vigil #${vigilNumber(s.seedLabel)}` : "Endless"} · Night ${s.day}</div>
     ${info.firstFind ? `<div class="newend">${e.win ? `Your first ${esc(e.title.replace(/^The /, ""))}` : "A new ending"}, ${found} of ${keys.length} found</div>` : ""}
     <h2 class="big">${esc(e.title)}</h2><p class="line">${esc(e.line)}</p>
-    <p class="endcause">${causeSentence(s)}${e.win ? `${esc(e.title)} on night ${s.day}.` : n === 0 ? "You didn't reach the first nightfall" : `You lasted ${plural(n, "night")}`}${e.win ? "" : info.newBest ? `, <b class="best">your best yet</b>.` : meta.plays > 1 ? `. Your best is ${meta.best}.` : "."}</p>
+    <p class="endcause">${causeSentence(s)}${e.win ? `${esc(e.title)} on night ${s.day}.` : n === 0 ? (s.endBy === "nightfall" ? "It was your first night" : "You didn't reach the first nightfall") : `You lasted ${plural(n, "night")}`}${e.win ? "" : info.newBest ? `, <b class="best">your best yet</b>.` : meta.plays > 1 ? `. Your best is ${meta.best}.` : "."}</p>
     ${lesson(s)}
     ${vs}
     <div class="endact"><button class="btn primary" data-v="again" type="button">${s.mode === "vigil" ? "Run again · Endless" : "Run again"}</button>
@@ -1290,7 +1400,7 @@ async function drawShareCard(s) {
   if (cause && cause.by) {
     g.font = '500 30px Inter, system-ui, sans-serif';
     g.fillStyle = "rgba(247,241,246,.7)";
-    g.fillText(`Ended by ${cause.by}`, W / 2, 848);
+    g.fillText(cause.by === "at nightfall" ? "Ended at nightfall" : `Ended by ${cause.by}`, W / 2, 848);
   }
   const COL = { purple: "#8a44a0", red: "#ff4d6d", gold: "#f2c35c", radiance: "#fff3c4", end: "#2a2230", crown: "#f2c35c" };
   const days = s.days.slice(-24);
@@ -1342,6 +1452,8 @@ function goHome() {
   busy = false;
   setMood("home");
   $("layer").innerHTML = "";
+  backdrop();
+  disarmMask();
   setSeal(null);
   $("app").hidden = true;
   $("home").hidden = false;
@@ -1364,6 +1476,8 @@ function renderHome() {
   const done = meta.vigils[date];
   const vigRun = run && run.mode === "vigil" && !run.over ? run : null;
   const resumeEndless = run && run.mode === "endless" && !run.over;
+  // A dare that was tomorrow's when the page opened is today's after midnight: read the link again so it can be played.
+  if (incoming && incoming.early && incoming.date <= date) readChallenge();
   const ch = incoming;
   const streak = vigilStreak(date);
   let html = "";
@@ -1372,9 +1486,12 @@ function renderHome() {
     const vn = vigilNumber(ch.date);
     const mine = meta.vigils[ch.date];
     const theirs = ch.nights == null ? "" : `They lasted <b>${plural(ch.nights, "night")}</b>${ch.ending ? ` (${esc(ENDINGS[ch.ending].title)})` : ""}. `;
-    html += `<div class="challenge" id="challenge"><div class="eyebrow">A challenge · Vigil #${vn}${ch.date === date ? " · today" : ` · ${ch.date}`}</div>
+    html += ch.early
+      ? `<div class="challenge" id="challenge"><div class="eyebrow">A challenge · Vigil #${vn} · tomorrow</div>
+      <p>${theirs}It's already tomorrow where they are. Vigil #${vn} opens here at midnight.</p></div>`
+      : `<div class="challenge" id="challenge"><div class="eyebrow">A challenge · Vigil #${vn}${ch.date === date ? " · today" : ` · ${ch.date}`}</div>
       <p>${theirs}Same seed. One attempt. Can you last longer?</p>
-      ${mine ? `<p>You lasted <b>${plural(+mine.nights || 0, "night")}</b> (${esc(ENDINGS[mine.over]?.title || "Abandoned")}).</p>` : vigRun && vigRun.seedLabel === ch.date ? `<button class="btn primary" id="b-challenge" type="button">Resume the challenge</button>` : `<button class="btn primary" id="b-challenge" type="button">Take the challenge</button>`}</div>`;
+      ${mine ?`<p>You lasted <b>${plural(+mine.nights || 0, "night")}</b> (${esc(ENDINGS[mine.over]?.title || "Abandoned")}).</p>` : vigRun && vigRun.seedLabel === ch.date ? `<button class="btn primary" id="b-challenge" type="button">Resume the challenge</button>` : `<button class="btn primary" id="b-challenge" type="button">Take the challenge</button>`}</div>`;
   }
   // An unfinished Vigil from an earlier night stays resumable; it never hides tonight's.
   const oldVig = vigRun && vigRun.seedLabel !== date && !(ch && vigRun.seedLabel === ch.date) ? vigRun : null;
@@ -1411,13 +1528,30 @@ function renderHome() {
   $("btn-music").textContent = meta.musicOff ? "Music off" : "Music on";
   $("btn-music").disabled = !!meta.mute;
   $("rulebook").innerHTML = RULEBOOK_URL ? `<a href="${RULEBOOK_URL}" target="_blank" rel="noopener">The full tabletop RPG →</a>` : "";
+  homeDay = date;
+  homeClock();
 }
+// The home screen is dated (tonight's Vigil, a dare that opens at midnight). Left open past midnight, or brought
+// back after it, it's drawn again for the new day; otherwise its buttons would start yesterday's Vigil.
+let homeDay = null;
+let homeTimer = 0;
+function homeClock() {
+  clearTimeout(homeTimer);
+  if ($("home").hidden) return;
+  if (homeDay !== todayISO()) return renderHome();
+  const next = new Date();
+  next.setHours(24, 0, 1, 0); // a second past local midnight
+  homeTimer = setTimeout(homeClock, next - new Date());
+}
+document.addEventListener("visibilitychange", () => document.hidden || homeClock());
 
 // A walked-away Vigil has no score to beat, but it can still be passed on.
 const abandonedText = (date) => [`FALSE LIGHT · Vigil #${vigilNumber(date)} · VENEFICA LUX`, "I walked away from this one.", `Same seed. Your turn: ${shareUrl().split("#")[0]}#vigil-${date}`].join("\n");
 
 function start(mode, date = todayISO()) {
   $("layer").innerHTML = "";
+  backdrop();
+  disarmMask();
   const resumable = run && !run.over && run.mode === mode && (mode === "endless" || run.seedLabel === date);
   if (!resumable) {
     if (mode === "vigil" && meta.vigils[date]) return goHome();
@@ -1463,8 +1597,8 @@ function start(mode, date = todayISO()) {
 function howTo() {
   return overlay(
     `<div class="eyebrow">How to play</div><div class="rules">
-    <p><b>Swipe the card</b> left or right (or tap a choice twice). Lit vials and tracks show what a choice will move, never which way. ${SKULL} marks a choice that can end your run.</p>
-    <p><b>Four meters.</b> Mark 6: you're Named. Strain 6: you Fracture (3 Favor absorbs one). Favor 0 or Hollow 4 at nightfall: it's over.</p>
+    <p><b>Swipe the card</b> left or right (or tap a choice twice; on a keyboard, ← or → twice, and Enter to go on). Lit vials and tracks show what a choice will move, never which way. ${SKULL} marks a choice that can end your run.</p>
+    <p><b>Four meters.</b> Mark 6: you're Named. Strain 6: you Fracture (3 Favor absorbs one). Favor 0 or Hollow 4 at nightfall: it's over. From Hollow 2 up, every Strain cost is 1 higher.</p>
     <p><b>Tap to check.</b> Tap any meter, track or the Bell in play for what it means and where it stands. Hold a Mask to read it.</p>
     <p><b>The Bell</b> (the dots, top right) counts four cards a day, then nightfall. A night takes some Strain off; a night without rest adds Hollow.</p>
     <p><b>Longing</b> is the ache the Light feeds on. At 3 or more, the False Light starts finding you.</p>
@@ -1495,7 +1629,7 @@ function masksGuide() {
   const sign = (v) => (v < 0 ? "−" : "+") + Math.abs(v);
   const stats = Object.entries(STATS).map(([k, v]) => `${STAT_LABEL[k]} ${sign(v)}`).join(" · ");
   const rows = Object.entries(MASKS)
-    .map(([k, m]) => `<div class="mrow${run && !run.over && run.mask === k ? " on" : ""}">${svg(MASK_ART[k], 5)}<p><b>${m.name}</b> · ${m.bonus}. <span class="risk">Cost: ${m.risk}.</span><br>Wear it when ${m.use.charAt(0).toLowerCase()}${m.use.slice(1)}</p></div>`)
+    .map(([k, m]) => `<div class="mrow${run && !run.over && board().mask === k ? " on" : ""}">${svg(MASK_ART[k], 5)}<p><b>${m.name}</b> · ${m.bonus}. <span class="risk">Cost: ${m.risk}.</span><br>Wear it when ${m.use.charAt(0).toLowerCase()}${m.use.slice(1)}</p></div>`)
     .join("");
   return overlay(
     `<div class="eyebrow">The Masks</div><div class="rules">
@@ -1530,7 +1664,14 @@ function toast(msg) {
 // ---------- boot ----------
 let incoming = null;
 function readChallenge() {
-  incoming = parseChallenge(location.hash, todayISO());
+  const today = todayISO();
+  incoming = parseChallenge(location.hash, today);
+  // A friend already past midnight sent tomorrow's Vigil. It can't be played here yet, but it isn't dropped:
+  // the home screen says when it opens, and their score waits for that Vigil's end screen.
+  if (!incoming) {
+    const early = parseChallenge(location.hash, tomorrowISO());
+    if (early && early.date > today) incoming = { ...early, early: true };
+  }
   if (incoming && incoming.nights != null) {
     meta.rivals[incoming.date] = { nights: incoming.nights, ending: incoming.ending };
     saveMeta();
