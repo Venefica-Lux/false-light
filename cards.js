@@ -8,6 +8,17 @@
 // fx keys: mark strain favor hollow longing untag gnosis cage apo rest reveal commune reckon set unset then end bond
 
 const o = (text, fx) => ({ text, fx });
+// The scattered light (the cards at the end of the deck) reaches the Vigil on this night. Every earlier night keeps the
+// deck it had. Move it only to the first night of a release that carries them, never earlier than the day it ships,
+// or a night someone already played would replay differently from Past Vigils. (2026-11-20: moved from 2026-11-09,
+// which passed before any public build carried these cards; the public builds dealt the old deck on those nights.)
+export const SPARK_DAY = "2026-11-23";
+export const sparkDeck = (s) => (s.mode === "vigil" ? s.seedLabel >= SPARK_DAY : s.mode === "ascension");
+const lit = (when) => (s) => sparkDeck(s) && (!when || !!when(s));
+// Word gets around (2026-11-20): the Vigil's from SPARK_DAY, and Exodus's from 2026-11-21 (owner call: no players yet, so
+// the occult control hashes were re-recorded and older Exodus links replay on the new deck). Never legacy Endless.
+export const heardDeck = (s) => sparkDeck(s);
+const heard = (when) => (s) => heardDeck(s) && (!when || !!when(s));
 // A Bond counts as earned whether it's still held or already spent catching you.
 const earned = (s, k) => s.bonds.includes(k) || (s.spent || []).includes(k);
 
@@ -25,7 +36,8 @@ export const CARDS = [
     id: "whisper", tier: 0, art: "sun", who: "The False Light",
     text: "Prosay. A pinch of the counterfeit sun, within reach. It would fix everything. For a while.",
     when: (s) => s.communion === 0 && (s.hollow >= 3 || s.strain >= 5 || s.longing >= 3 || s.cascade || s.reckoning > 0),
-    weight: (s) => (s.cascade ? 14 : 5),
+    // Seized by Lilith, the Eye is open and the Light finds it twice as easily.
+    weight: (s) => (s.cascade ? 14 : 5) * (s.maskLocked && s.mask === "lilith" ? 2 : 1),
     left: {
       label: "Hold",
       roll: { stat: "steel", light: true },
@@ -942,6 +954,341 @@ export const CARDS = [
     left: { label: "Write the first line", fx: { gnosis: 1, strain: 1 }, text: "Your record. Your order. Your verbs." },
     right: { label: "Later", text: "Later is a real place. You've been there." },
   },
+
+  // ================= the scattered light (2026-10-26) =================
+  // The rest of the rulebook's mythology: Wisdom's fallen spark (§2.1) and the Witness (§10.2), the name taken as a title
+  // (§3), the Eye in the Empire's own standard (§1.3), the epistemic ward (§2.3), an internal chain (§14.5), debts and the
+  // Replacement Map (§15, §19.2), the Contradiction Seat (§19.5), Lightness (§19.1), the Ledger's line (§18), movement
+  // (§16), the three arcs (§23), the ritual close (§20.1), and one more road per Mask from her own move or exit (§9).
+  // Every one is gated by lit(): the Vigil deals them from SPARK_DAY on, so every earlier night plays exactly as it did
+  // (exodus.test.mjs's golden trace holds it), Exodus deals them at once, and a run saved in the old Endless never does.
+
+  // ---------------- the fallen spark ----------------
+  {
+    id: "spark1", tier: 0, art: "candle", who: "The Scattered Light", once: true,
+    text: "In the gutter by the tithe-house, a glint the rain can't put out. Old women say it's a piece of Wisdom, from when she fell. The clerks say it's glass.",
+    when: lit((s) => s.day >= 2),
+    left: { label: "Pick it up", fx: { gnosis: 1, mark: 1, set: { spark: 1 } }, text: "Warm, like a coin someone just let go of. A clerk watched you kneel in the gutter and wrote down where." },
+    right: { label: "Leave it for someone poorer", fx: { strain: -1 }, text: "Somebody will need it more tonight. You walk home lighter, which is a strange thing to get from leaving something behind." },
+  },
+  {
+    id: "spark2", tier: 1, art: "eye", who: "The Witness", once: true,
+    text: "A woman at the well sees the glint through your pocket and doesn't ask for it. “Oh,” she says. “You too.” She doesn't want anything. She just saw.",
+    when: lit((s) => s.flags.spark === 1),
+    weight: 4,
+    left: { label: "Let her see", fx: { longing: -1, gnosis: 1, strain: 1, set: { spark: 2 } }, text: "Seen, not catalogued. It costs something to be looked at that plainly. It's worth what it costs." },
+    right: { label: "“It's glass.”", fx: { untag: 1, longing: 1, unset: "spark" }, text: "She nods like she's heard that one before. Safe, and lonely in the exact shape you're used to." },
+  },
+  {
+    id: "spark3", tier: 0, art: "candle", who: "The Scattered Light", once: true,
+    text: "In the dark the glint is brighter than it has any right to be. You could hold it up and let the quarter see what you carry. Or you could keep turning toward where it came from.",
+    when: lit((s) => s.flags.spark === 2),
+    weight: 5,
+    left: { label: "Orient", fx: { gnosis: 2, apo: -2, strain: 1, rest: true, unset: "spark" }, text: "You address the light. You don't become it. The glint dims to a pulse, which is how you know it's still alive." },
+    right: { label: "Hold it up", fx: { apo: 2, mark: 1, strain: -2, unset: "spark" }, text: "For one night you're the brightest thing in the Warrens. The wolves have always loved a lamp." },
+  },
+
+  // ---------------- the name ----------------
+  {
+    id: "venefica1", tier: 3, art: "serpent", who: "The Name", once: true, named: "named_zealot",
+    text: "A deacon points across the tithe-queue. “Venefica.” Poisoner. The queue goes quiet to see what you'll do with it.",
+    when: lit((s) => s.day >= 2),
+    left: {
+      label: "Take the name",
+      roll: { stat: "freq" },
+      hit: o("“Yes,” you say, like he paid you a compliment. The queue laughs at him, not you. The word was meant as a brand. It fits better as a title.", { gnosis: 2, untag: 1, set: { name: true } }),
+      mid: o("You take it, a little too loud. It's yours now. So is the deacon's interest.", { gnosis: 1, mark: 1, set: { name: true } }),
+      miss: o("You take it, and he writes it down. A title and a file: same word, two ledgers.", { mark: 2, strain: 1 }),
+    },
+    right: { label: "“Not me.”", fx: { mark: -1, longing: 1 }, text: "He moves on to someone else. The word stays in the queue, unclaimed, waiting for whoever will pick it up." },
+  },
+  {
+    id: "venefica2", tier: 0, art: "serpent", who: "The Name Travels", once: true,
+    text: "A girl in the dye-yards has painted a little serpent on a wall and signed it Venefica. She doesn't know it's you. She doesn't need to.",
+    when: lit((s) => s.flags.name),
+    weight: 4,
+    left: { label: "Let it be hers", fx: { gnosis: 1, apo: -1, unset: "name" }, text: "The name was never a crown. It's a working, and now somebody else is working it." },
+    right: { label: "Tell her it's you", fx: { longing: -1, apo: 1, mark: 1, unset: "name" }, text: "Her face. You'll keep that for years. So will she, and she talks." },
+  },
+
+  // ---------------- the Eye in the Empire ----------------
+  {
+    id: "standard", tier: 2, art: "eye", who: "The Eye in the Standard", named: "named_zealot",
+    text: "A Preliator standard on the processional way, purple and black iron. Woven into the hem, where no deacon ever looks: an eye that isn't theirs.",
+    when: lit(),
+    weight: 0.6,
+    left: { label: "Walk on, knowing", fx: { gnosis: 1, strain: 1 }, text: "It was there the whole parade: the Empire's own banner, carrying a witness it can't see. You carry that home. It's heavy, in a good way." },
+    right: {
+      label: "Show the woman beside you",
+      roll: { stat: "shade" },
+      hit: o("One look, one nod, gone into the crowd. Now two people know the Empire is compromised.", { gnosis: 1, untag: 1, longing: -1 }),
+      mid: o("She sees it. So does the standard-bearer's sergeant, who sees you pointing.", { gnosis: 1, mark: 1 }),
+      miss: o("Pointing at a standard during the litany. They write that down.", { mark: 2, strain: 1 }),
+    },
+  },
+  {
+    id: "litany", tier: 1, art: "bell", who: "The Litany",
+    text: "The Dominion's litany has a tune, and the tune has hooks. You catch yourself humming it at the well.",
+    when: lit(),
+    weight: 0.6,
+    left: { label: "Hum something else", fx: { strain: 1, gnosis: 1 }, text: "It takes work to keep your own song in your head. That's the point of theirs." },
+    right: { label: "Let it play", fx: { strain: -1, cage: 1 }, text: "It's catchy. It's meant to be. By noon you know all the words." },
+  },
+
+  // ---------------- the ward and the internal chain ----------------
+  {
+    id: "three_q", tier: 0, art: "scroll", who: "The Three Questions",
+    text: "A broken latch, a letter opened, a man who looked twice. It feels like one hand did all of it. The feeling arrived very fast.",
+    when: lit((s) => s.day >= 2),
+    weight: 0.6,
+    left: { label: "Ask the three questions", fx: { gnosis: 1, strain: 1, apo: -1 }, text: "Did it happen? Is there intent? Is there a thread? Yes, no, no. A broken latch is a broken latch. You fix it." },
+    right: { label: "It's one hand", fx: { untag: 1, apo: 1, strain: 1 }, text: "You change the latch, the route and the well. Some of that was smart. You'll never know which part." },
+  },
+  {
+    id: "enemy1", tier: 1, art: "horn", who: "The Enemy", once: true,
+    text: "He's been gone a month. Blocked, warned off, moved districts. You still walk past his old door, just to check.",
+    when: lit((s) => s.day >= 2 && s.untag >= 2),
+    weight: 2,
+    left: { label: "Name a goal that isn't him", fx: { gnosis: 1, strain: 1 }, text: "A goal with nobody's name in it. It takes the whole walk home to think of one." },
+    right: { label: "Just to check", fx: { untag: 1, strain: -1, set: { enemy: 1 } }, text: "The door's still there. He's still gone. It feels like vigilance. It feels good." },
+  },
+  {
+    id: "enemy2", tier: 2, art: "horn", who: "The Enemy", once: true,
+    text: "You know his new address, his new hours, the name of his new dog. You haven't learned one thing about yourself in weeks.",
+    when: lit((s) => s.flags.enemy === 1),
+    weight: 5,
+    left: {
+      label: "Turn the compass",
+      roll: { stat: "wits" },
+      hit: o("You burn the notes. For an hour you don't know where he is, and the Warrens are bigger than they've been in weeks.", { gnosis: 1, apo: -1, unset: "enemy" }),
+      mid: o("You burn half. You'd memorized the other half.", { strain: 1, unset: "enemy" }),
+      miss: o("You meant to burn them. You read them one more time instead.", { apo: 1, strain: 1, set: { enemy: 2 } }),
+    },
+    right: { label: "Keep the file", fx: { untag: 1, apo: 1, mark: 1, set: { enemy: 2 } }, text: "It's a good file. Thorough. It reads a lot like the Inquisition's." },
+  },
+  {
+    id: "enemy3", tier: 3, art: "horn", who: "The Enemy", once: true,
+    text: "He wins without lifting a finger: every hour of yours points at him. You could set him down. Or you could spend the rest of your life guarding a door he walked out of.",
+    when: lit((s) => s.flags.enemy === 2),
+    weight: 6,
+    left: { label: "Set him down", fx: { strain: 2, gnosis: 2, apo: -2, unset: "enemy" }, text: "You don't forgive him. You just stop carrying him. The weight was never his to begin with." },
+    right: { label: "Keep watch", fx: { end: "shadow" }, text: "You take up your post." },
+  },
+
+  // ---------------- the people who hold the wall ----------------
+  {
+    id: "contradiction", tier: 0, art: "rose", who: "The Contradiction Seat",
+    text: "Your oldest friend reads your plan for the week and says, “No.” Not unkind. Just no. She's allowed. You gave her the seat.",
+    when: lit((s) => s.day >= 2 && (s.apo >= 1 || s.gnosis >= 2)),
+    left: {
+      label: "Hear her out",
+      roll: { stat: "wits" },
+      hit: o("She was wrong, and she says so. Your plan holds, and now it's been checked by someone who isn't you.", { longing: -1 }),
+      mid: o("One assumption was bad. You fix it. The plan is better and your pride is smaller.", { untag: 1, strain: 1 }),
+      miss: o("She was right. You'd have walked straight into it. It stings, and it saved you.", { strain: 1, apo: -1 }),
+    },
+    right: { label: "Find someone who agrees", fx: { strain: -1, longing: 1, apo: 1 }, text: "There's always someone. It's warm in the echo. Nothing in there ever tells you no." },
+  },
+  {
+    id: "replacement", tier: 0, art: "key", who: "The Replacement Map",
+    text: "The ferry boy who got you across the river after dark has gone to sea. He was your only way across.",
+    when: lit((s) => s.day >= 2 && !s.flags.onePath),
+    weight: 0.6,
+    left: { label: "Find a backup tonight", fx: { strain: 2, untag: 1 }, text: "Two names, a cart schedule, and the long bridge as the last resort. Nobody cuts you off with one stone now." },
+    right: { label: "Work this side of the water", fx: { favor: 1, set: { onePath: true } }, text: "Saves the fare, for now. There's no second way home." },
+  },
+  {
+    id: "replacement2", tier: 2, art: "hood", who: "The River", once: true, named: "named_hunt",
+    text: "Night, the far bank, the Bell close. The only crossing you knew is gone, and a patrol is coming down the quay.",
+    when: lit((s) => s.flags.onePath && s.day >= 3),
+    weight: 3,
+    left: {
+      label: "Find another way, now",
+      roll: { stat: "wits" },
+      hit: o("A laundress with a skiff. A fair price and no questions. Now you know two ways.", { favor: -1, unset: "onePath" }),
+      mid: o("The long bridge, past the watch-house. You make the Bell, barely, and they see you make it.", { mark: 1, strain: 1, unset: "onePath" }),
+      miss: o("No crossing. A doorway, a cold night, and a patrol that took your name.", { mark: 2, hollow: 1, strain: 1, unset: "onePath" }),
+    },
+    right: { label: "Pay a stranger with a boat", fx: { favor: -2, cage: 1, unset: "onePath" }, text: "He rows you over and remembers your face, your purse, and where you got off." },
+  },
+  {
+    id: "debt1", tier: 0, art: "coin", who: "A Debt", once: true,
+    text: "The chandler's widow is short for the tithe, the kind of short that ends things. You could cover her. She'd owe you, and here owing means something.",
+    when: lit((s) => s.favor >= 2),
+    left: { label: "Cover her", fx: { favor: -2, set: { debt: true } }, text: "She doesn't thank you. She writes your name in the back of her book, which is better." },
+    right: { label: "You can't carry everyone", fx: { longing: 1 }, text: "You can't. You know that. You keep knowing it all evening." },
+  },
+  {
+    id: "debt2", tier: 0, art: "coin", who: "The Debt",
+    text: "The widow heard the watch is asking about you. She's at your door with her book open to your page.",
+    when: lit((s) => s.flags.debt && (s.mark >= 3 || s.strain >= 4)),
+    weight: 4,
+    left: { label: "Call it in", fx: { mark: -2, unset: "debt" }, text: "She tells the sergeant you were at her shop all week. She's very boring about it. He leaves." },
+    right: { label: "Save it for worse", fx: { strain: -1 }, text: "“Not yet.” She closes the book and makes you tea, which isn't in the book." },
+  },
+  {
+    id: "lightness", tier: 0, art: "cup", who: "Lightness",
+    text: "A friend who doesn't need you for anything wants to go watch the barges come in. Just watch them.",
+    when: lit(),
+    left: { label: "Go watch the barges", fx: { hollow: -1, longing: -1, favor: -1 }, text: "Two hours of nothing useful. Your shoulders come down from around your ears. The market didn't get that part of you today." },
+    right: { label: "You have work", fx: { favor: 1, hollow: 1 }, text: "You earn the afternoon. She sends you a drawing of a barge. It's a bad drawing. You keep it." },
+  },
+
+  {
+    id: "conversion", tier: 0, art: "scroll", who: "The Conversion Principle",
+    text: "Three standing commitments this week, and one of them pays nothing at all: no coin, no sleep, no friend, nothing learned. You can't even say what it's for.",
+    when: lit((s) => s.day >= 2),
+    left: { label: "Drop it", fx: { favor: 1, rest: true }, text: "An evening back. You spend half of it on paid work and half of it asleep. Neither half needed a speech." },
+    right: { label: "Keep it, and say why", fx: { gnosis: 1, strain: 1 }, text: "Out loud, it turns out it's the one hour a week nobody bills. Fair enough. You keep it." },
+  },
+
+  // ---------------- the Ledger's line, the roads, the arcs ----------------
+  {
+    id: "boots", tier: 3, art: "coin", who: "The Tolerated Line", named: "named_clerk",
+    text: "New boots. Good ones, the first in years. The almoner's clerk looks at your feet a beat too long.",
+    when: lit((s) => s.favor >= 4),
+    left: { label: "Scuff them in the gutter", fx: { strain: 1, untag: 1 }, text: "Ten minutes of ruining something nice. Back under the line, as far as anybody's feet can tell." },
+    right: { label: "Wear them proud", fx: { strain: -1, mark: 1 }, text: "They're beautiful and they're yours. The clerk writes something beside your name." },
+  },
+  {
+    id: "almscart", tier: 0, art: "bell", who: "The Alms-Cart",
+    text: "The alms-cart runs to a schedule: same stops, same hour, every day. Reliable. Everybody knows where it stops.",
+    when: lit(),
+    weight: 0.6,
+    left: { label: "Ride it", fx: { hollow: -1, mark: 1 }, text: "Off your feet the whole length of the quarter. At the third stop, the same man gets on as yesterday." },
+    right: { label: "Walk", fx: { strain: 1, untag: 1 }, text: "Blisters and no schedule. Nobody can meet you at a stop you didn't take." },
+  },
+  {
+    id: "cartomancer", tier: 0, art: "eye", who: "The Cartomancer", once: true,
+    text: "A woman in the market turns three cards for a copper: the Star, Death, Temperance. “Survive. Let it change you. Come back.” She tells everyone the same.",
+    when: lit((s) => s.favor >= 1),
+    left: { label: "Pay the copper", fx: { favor: -1, gnosis: 1 }, text: "Everybody's road, in the same order. It's worth a copper to hear it out loud." },
+    right: { label: "“Read mine. Just mine.”", fx: { strain: -1, longing: 1 }, text: "She does yours for free, a long look and a longer story about how you're special. You are. So was everyone else in the queue. It felt wonderful." },
+  },
+  {
+    id: "ritual", tier: 0, art: "candle", who: "The Close",
+    text: "Last night's working is still open: the candle burned down, the circle unbroken, the words of the close never said. The room still hums.",
+    when: lit((s) => s.gnosis >= 2),
+    left: { label: "Say the close", fx: { strain: -1, rest: true }, text: "“This working is ended.” The hum stops. The room is just a room again, which is what you need to sleep in." },
+    right: { label: "Leave it open", fx: { gnosis: 1, longing: 1, strain: 1 }, text: "It's still working. You can feel it. You can also feel it in your teeth at the fourth hour." },
+  },
+
+  // ---------------- one more road for each Mask (drawn only while she's worn) ----------------
+  {
+    id: "nyx_geometry", tier: 0, art: "veil", who: "Nyx · Read the Geometry",
+    text: "Behind the Veil the tithe-house is a machine: inputs, outputs, and one clerk who is the only moving part.",
+    when: lit((s) => s.mask === "nyx"),
+    weight: 2,
+    left: {
+      label: "Read the machine",
+      roll: { stat: "freq" },
+      hit: o("Three true things. The ledger shuts at the fifth bell, the clerk can't read cipher, and nobody checks the second drawer.", { untag: 2, gnosis: 1 }),
+      mid: o("One true thing: the second drawer.", { untag: 1 }),
+      miss: o("You see a pattern that isn't there, and you'd swear to it.", { apo: 1, strain: 1 }),
+    },
+    right: { label: "Eat something first", fx: { hollow: -1 }, text: "Bread, standing up. The machine can wait. Behind the Veil it's easy to forget you have a body, so you don't." },
+  },
+  {
+    id: "eris_exit", tier: 0, art: "blade", who: "Eris · the Blade's Exit",
+    text: "You've been the immovable object all week. The kids in the yard need a referee for their game, and they've picked you.",
+    when: lit((s) => s.mask === "eris"),
+    weight: 2,
+    left: { label: "Referee, badly", fx: { longing: -1, strain: -1, favor: -1 }, text: "You call every foul wrong on purpose. They boo you. It's the best you've felt in days." },
+    right: { label: "Keep the edge", fx: { favor: 1, longing: 1 }, text: "Back to work. The Blade doesn't play. That's the whole of her problem." },
+  },
+  {
+    id: "lilith_ledger", tier: 0, art: "serpent", who: "Lilith · the Second Ledger",
+    text: "The tithe-man holds out his hand. In his ledger it's a payment. In Lilith's it can be an offering you chose, which is another thing entirely.",
+    when: lit((s) => s.mask === "lilith"),
+    weight: 2,
+    left: {
+      label: "Make it your ceremony",
+      roll: { stat: "freq" },
+      hit: o("You pay him like a blessing. He gets flustered and undercounts. Your ledger, not his.", { gnosis: 2, favor: 1 }),
+      mid: o("The working takes, and it opens you a little too wide.", { gnosis: 1, longing: 1 }),
+      miss: o("He felt blessed at, and he reported it.", { mark: 1, strain: 1 }),
+    },
+    right: { label: "Just pay it", fx: { favor: -1, strain: -1 }, text: "Coin, hand, done. Not every exchange has to be a rite. That's its own relief." },
+  },
+  {
+    id: "bare_ask", tier: 0, art: "door", who: "The Bare Face · Just Ask",
+    text: "No working tonight, no frequency. You're hungry, and there's a back door with a light on.",
+    when: lit((s) => s.mask === "bare" && s.hollow >= 1),
+    weight: 2,
+    left: {
+      label: "Knock and ask",
+      roll: { stat: "fortune" },
+      hit: o("Simple and kind. The soup is hot and nobody needs your story.", { hollow: -1, longing: -1 }),
+      mid: o("You get the soup, and a few questions with it.", { hollow: -1, strain: 1 }),
+      miss: o("The door doesn't open. Being a person is a risk too.", { longing: 1, strain: 1 }),
+    },
+    right: { label: "Don't ask", fx: { untag: 1, longing: 1 }, text: "Nobody owes you soup. Nobody learns you were hungry, either." },
+  },
+
+  // ================= word gets around (2026-11-20) =================
+  // A city that writes everything down also repeats it. A rumor about you goes from print to the well to a tavern song
+  // (a three-card road), plus three cards about passing things on: a copyist, a tally-clerk who pays per name, and a
+  // note from someone who made it through. Gated by heard(): the Vigil deals them from SPARK_DAY; Exodus
+  // and legacy Endless never do, so Exodus's control hashes and sims are untouched. The always-on cards draw at 0.6, the arc's follow-ups
+  // only when it's started, and no careful side charges Hollow (the scattered light's lesson: that was what cost Crowns).
+
+  // ---------------- the rumor ----------------
+  {
+    id: "rumor1", tier: 1, art: "scroll", who: "The Broadsheet", once: true,
+    text: "Page three of the parish broadsheet: a poisoner in the Warrens, tall, fair, works by the river. You are none of those things. It's still about you.",
+    when: heard((s) => s.day >= 2),
+    weight: 0.6,
+    left: { label: "Let it run", fx: { untag: 1, longing: 1, set: { rumor: 1 } }, text: "A wrong description is the best cover there is. Half the quarter is looking for somebody tall. Nobody is looking for you, which is its own kind of lonely." },
+    right: { label: "Write in a correction", fx: { gnosis: 1, mark: 1 }, text: "You send one line, unsigned: the poisoner is not tall. The editor prints it. So now the record has one true thing in it, and it came from you." },
+  },
+  {
+    id: "rumor2", tier: 0, art: "cup", who: "The Retelling", once: true,
+    text: "At the well a woman tells you the story back, with improvements. In her version the poisoner only ever poisons landlords. People are nodding.",
+    when: heard((s) => s.flags.rumor === 1),
+    weight: 4,
+    left: { label: "Nod along", fx: { strain: -1, cage: 1, set: { rumor: 2 } }, text: "It's a better story than yours. You let them keep it, and it's nice, for an afternoon, to be somebody's hero by accident." },
+    right: {
+      label: "Tell it straight",
+      roll: { stat: "wits" },
+      hit: o("You tell it plain: no landlords, nobody's hero, just someone who got through. It goes over better than the legend. People trust a story with boring parts.", { gnosis: 1, longing: -1, unset: "rumor" }),
+      mid: o("They believe you, mostly. One of them asks how you know so much.", { gnosis: 1, mark: 1, unset: "rumor" }),
+      miss: o("Nobody wants the boring version. Somebody remembers the woman who tried to tell it.", { mark: 2, strain: 1, unset: "rumor" }),
+    },
+  },
+  {
+    id: "rumor3", tier: 0, art: "bell", who: "The Song", once: true,
+    text: "By now it's a song. Four verses at the Lamplighter's, a chorus everybody knows, and the second verse is wrong about the landlords.",
+    when: heard((s) => s.flags.rumor === 2),
+    weight: 5,
+    left: { label: "Teach them a better verse", fx: { gnosis: 1, apo: 1, unset: "rumor" }, text: "You don't sing it. You hum it to the fiddler once, at the bar, and by closing the whole room has it. The song is truer now, and louder." },
+    right: { label: "Let it die out", fx: { strain: -1, longing: 1, unset: "rumor" }, text: "Songs about nobody don't last a season. In a month it'll be a tune with no words, and you'll be someone who doesn't sing along." },
+  },
+
+  // ---------------- passing it on ----------------
+  {
+    id: "copyist", tier: 0, art: "letter", who: "The Copyist",
+    text: "The copyist on Tallow Row will copy your notes for the women in the next street, twelve pages for a hot meal. He's quick. He reads everything he copies.",
+    when: heard((s) => s.day >= 2),
+    weight: 0.6,
+    left: { label: "Have them copied", fx: { gnosis: 1, favor: -1, mark: 1 }, text: "Twelve pages go out in four hands. What helped you is somebody else's now. The copyist knows your handwriting, too." },
+    right: { label: "Keep them in your coat", fx: { strain: -1, longing: 1 }, text: "Some things only stay safe while they stay in one place. The pages stay warm against you. The women in the next street work it out without them." },
+  },
+  {
+    id: "tally", tier: 2, art: "coin", who: "The Tally-Clerk", named: "named_clerk",
+    text: "The Dominion pays a copper a name. A boy you've fed twice is standing at the tally-clerk's table, and he's just seen you.",
+    when: heard(),
+    weight: 0.6,
+    left: { label: "Pay him more not to", fx: { favor: -2, mark: -1 }, text: "Two coppers in his hand, and a third for his sister. He leaves the table without saying anything. It's cheaper than being written down." },
+    right: { label: "Trust him", fx: { mark: 1, longing: -1 }, text: "You don't buy him off. He gives the clerk a name, somebody's, maybe yours. Then he comes back for supper like nothing happened, which might be true." },
+  },
+  {
+    id: "pass_on", tier: 0, art: "hand", who: "The Open Table", once: true,
+    text: "A folded note, passed under the table: which stairs the patrols skip, which baker gives the end of the loaf. At the bottom, in a different hand: pass it on.",
+    when: heard((s) => s.day >= 2),
+    weight: 0.6,
+    left: { label: "Add a line and pass it on", fx: { longing: -2, strain: 1 }, text: "You add the well with the honest bucket and leave it under someone else's plate. Somebody you'll never meet is going to eat tomorrow." },
+    right: { label: "Keep it", fx: { favor: 1, strain: -1 }, text: "You fold it into your shoe. Every stair on it checks out. Whoever wrote it would want you to have it. Probably." },
+  },
 ];
 
 // An ending's hint is all the Endings gallery shows until you've found it.
@@ -961,6 +1308,7 @@ export const ENDINGS = {
   rex: { title: "A Small Rex Mundi", line: "Terror was your armor, and now you rule a little geometry of your own. The Architect's oldest trap.", hint: "Let them see what you are, again and again." },
   flag: { title: "Under the Old Flag", line: "It gave you a family and an enemy in the same breath. It explained everything and fixed nothing.", hint: "Go home to the old yard, all the way." },
   corner: { title: "The Old Corner", line: "You only went back for the work. The wagon doesn't ask what you went back for.", hint: "Go back to the old corner for the work." },
+  shadow: { title: "His Shadow", line: "You beat him a long time ago. You've walked his route every day since, and called it keeping watch.", hint: "Keep watching a man who's already gone." },
   ordinary: { title: "Ordinary Time", line: "A key, a lamp of your own, three people who'd answer at the fourth hour. Tomorrow has an address. Nobody writes songs about it, so you will.", hint: "Three people, a key, and a night's sleep.", win: true },
   crown: { title: "The Double Crown", line: "They never got you into the ledger, and you can see the walls for what they are. You survived long enough to become the author.", hint: "Become untaggable. Wake up.", win: true },
 };

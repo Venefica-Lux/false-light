@@ -1,16 +1,33 @@
 // FALSE LIGHT — UI. Everything that touches the DOM lives here; the rules live in engine.js.
+import { EMBLEMS, emblem, endingArt, ladderArt } from "./visuals.js";
+import { POLISHED_LOOPS, loopFadeCurve, loopDue } from "./audio-loops.js";
+import { lockAxis, pushSample, releaseVelocity, decide } from "./swipe.js";
 import {
-  newGame, choose, preview, switchMask, maskCost, maskStrain, tutorialPending, currentCard, shareText, vigilNumber, nightsSurvived,
-  cardCosts, resolveStir, endCause, parseChallenge, isWin, bondsEarned, migrate, CARDS, METERS, MASKS, ENDINGS, STAT_LABEL, STATS, CARDS_PER_DAY, BONDS,
+  newGame, choose, preview, switchMask, maskCost, maskStrain, tutorialPending, currentCard, shareText, vigilCardLine, vigilNumber, nightsSurvived,
+  cardCosts, resolveStir, endCause, parseChallenge, parseExodus, isWin, bondsEarned, migrate, LAUNCH_DAY, CARDS, METERS, MASKS, LIGHT, ENDINGS, STAT_LABEL, STATS, CARDS_PER_DAY, BONDS,
+  work, canWork, transmute, canTransmute, encClock, encBestRoad, ENCOUNTERS, INTENTS, RELICS, ROADS, ACTS, VERBS, UNLOCKS, EDICTS, MAX_EDICT, pullAt, bareAt,
+  skyToday, canRefuse, refuse, relicPrice, canCorrespond, correspond, canVessel, vessel,
 } from "./engine.js";
+import {
+  SPHERES, LADDER, MEANS, RITES, ACCOUNTS, PATHS, TRACK_WORD, STONES, ORBIT, occOf, occDay, pathOf, shownTrack, sphereName, riteOn, occReading, inVessel, isStone,
+  hourOf, gatesPassed,
+} from "./occult.js";
+import { ARCANA, ARCANA_PLANNED, SIGNS, PLANETS, PLACES, DIGNITY_WORD, cardTitle, cardLine, rulerName } from "./arcana.js";
 
 // OWNER DECISION: canonical public URLs. PLAY_URL is where shared links point when the page can't see its
-// own address (inside the artifact frame, or opened from a file): the public site. Empty hides the link.
-const PLAY_URL = "https://venefica-lux.github.io/false-light/";
+// own address (inside itch.io's player or the artifact frame, or opened from a file). Empty hides the link.
+// 2026-10-13: the itch.io page, the copy players are actually on. itch doesn't pass a link's #fragment into its
+// player, so a dare opened there plays tonight's Vigil without the friend's score to beat.
+const PLAY_URL = "https://veneficalux.itch.io/false-light";
 const RULEBOOK_URL = "";
 // The soundtrack: VENEFICA LUX's own tracks, shipped beside the page in music/. When they can't load
 // (a single file opened from a phone's file manager), the procedural score below plays instead.
-const TRACKS = { vigil: "music/vigil.mp3", light: "music/communion.mp3", cascade: "music/geometry.mp3", sour: "music/communion-sour.mp3" };
+// Each Mask has her own track: NYX REVENANT, ERIS VALENTINE and LILITH ABRAXAS (2026-10-13).
+const TRACKS = {
+  vigil: "music/vigil.mp3", light: "music/communion.mp3", cascade: "music/geometry.mp3", sour: "music/communion-sour.mp3",
+  nyx: "music/nyx.mp3", eris: "music/eris.mp3", lilith: "music/lilith.mp3",
+  litany: "music/litany.mp3", architect: "music/architect.mp3", unmaking: "music/unmaking.mp3",
+};
 
 const $ = (id) => document.getElementById(id);
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -70,7 +87,12 @@ function persistenceWarning() {
   banner.textContent = 'Progress is not being saved. Keep this page open; runs and Vigil attempts may be lost on reload.';
 }
 
-const META0 = { endings: {}, best: 0, plays: 0, crowns: 0, tutorialDone: false, vigils: {}, rivals: {}, hints: {}, mute: false };
+const META0 = { endings: {}, best: 0, plays: 0, crowns: 0, tutorialDone: false, vigils: {}, rivals: {}, hints: {}, mute: false, asc: null };
+const occRecord = (o) => {
+  const x = o && typeof o === "object" && !Array.isArray(o) ? o : {};
+  const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
+  return { gates: obj(x.gates), paths: obj(x.paths) };
+};
 // Saved metadata outlives releases too: missing or mistyped fields take their defaults, nothing present is lost.
 function loadMeta() {
   const m = store.get("fl.meta", {});
@@ -78,6 +100,27 @@ function loadMeta() {
   for (const k of ["endings", "vigils", "rivals", "hints"]) if (!out[k] || typeof out[k] !== "object" || Array.isArray(out[k])) out[k] = {};
   for (const k of ["best", "plays", "crowns"]) if (!Number.isFinite(out[k])) out[k] = 0;
   for (const [d, v] of Object.entries(out.vigils)) if (!v || typeof v !== "object") out.vigils[d] = { over: "abandoned", nights: 0, text: "" };
+  // Exodus's own record (its mode id is "ascension"): runs, the furthest act, adversaries met and how, intents seen (the Adversaries sheet).
+  const a = out.asc && typeof out.asc === "object" && !Array.isArray(out.asc) ? out.asc : {};
+  // Exodus was public before it opened up this way (2026-10-17): anyone with a finished or a saved road keeps the map.
+  const veteran = (Number.isFinite(a.runs) && a.runs > 0) || !!store.get("fl.asc", null);
+  out.asc = {
+    runs: Number.isFinite(a.runs) ? a.runs : 0,
+    act: Number.isFinite(a.act) ? a.act : 0,
+    met: a.met && typeof a.met === "object" && !Array.isArray(a.met) ? a.met : {},
+    seen: a.seen && typeof a.seen === "object" && !Array.isArray(a.seen) ? a.seen : {},
+    // What's been unsealed (ascension.js UNLOCKS). Anyone who walked Exodus before it opened up this way keeps the
+    // whole map they already had.
+    unlocked: Array.isArray(a.unlocked) ? a.unlocked.filter((k) => UNLOCKS[k]) : veteran ? Object.keys(UNLOCKS) : [],
+    // Your line of heretics, newest last: { n, by, end, act, edict, won }. The last one walks into the next road.
+    lineage: Array.isArray(a.lineage) ? a.lineage.filter((x) => x && typeof x.n === "string").slice(-12) : [],
+    // The highest Edict unsealed (EDICTS): 0 until a Way Out.
+    // Someone who walked a Way Out before Edicts existed has already earned the first.
+    edict: Number.isFinite(a.edict) ? Math.max(0, Math.min(MAX_EDICT, Math.floor(a.edict))) : Object.keys(out.endings).some((k) => ENDINGS[k] && ENDINGS[k].family === "unmaking" && ENDINGS[k].win) ? 1 : 0,
+    // The occult expansion (occult.js), for the codex only: knowledge, never power. gates: how often each sphere's gate
+    // was passed, by what means; paths: how often each way was walked.
+    occ: occRecord(a.occ),
+  };
   return out;
 }
 let meta = loadMeta();
@@ -89,10 +132,17 @@ if (run?.mode === 'vigil' && meta.vigils?.[run.seedLabel]) {
   run = null;
 }
 if (run?.over && run.mode === 'vigil') {
-  meta.vigils[run.seedLabel] ??= { over: run.over, nights: nightsSurvived(run), text: shareText(run, PLAY_URL) };
+  meta.vigils[run.seedLabel] ??= { over: run.over, nights: nightsSurvived(run), text: shareText(run, PLAY_URL), ...(run.late ? { late: true } : {}) };
   if (store.set('fl.meta', meta)) store.del('fl.run');
 }
 if (run && (run.v !== 1 || run.over || !currentCard(run))) run = null;
+// Exodus keeps its own slot, so a long run survives a Vigil or an Endless run played in between. `run` is
+// whichever run is on screen; `reg` is the Endless or Vigil slot, `ascRun` the Exodus slot.
+let ascRun = migrate(store.get("fl.asc", null));
+if (ascRun && (ascRun.v !== 1 || ascRun.over || ascRun.mode !== "ascension" || !currentCard(ascRun))) ascRun = null;
+if (run && run.mode === "ascension") run = null;
+let reg = run;
+const slotOf = (r) => (r && r.mode === "ascension" ? "fl.asc" : "fl.run");
 let busy = false;
 const inFrame = (() => {
   try {
@@ -103,7 +153,7 @@ const inFrame = (() => {
 })();
 
 const saveMeta = () => store.set("fl.meta", meta);
-const saveRun = () => (run && !run.over ? store.set("fl.run", run) : store.del("fl.run"));
+const saveRun = () => (run && !run.over ? store.set(slotOf(run), run) : store.del(slotOf(run)));
 const localISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const todayISO = () => localISO(new Date());
 const tomorrowISO = () => {
@@ -120,7 +170,31 @@ const RAYS = Array.from({ length: 12 }, (_, i) => {
   const r1 = 24, r2 = i % 2 ? 36 : 44;
   return `M${50 + r1 * Math.cos(a)} ${50 + r1 * Math.sin(a)}L${50 + r2 * Math.cos(a)} ${50 + r2 * Math.sin(a)}`;
 }).join("");
+// The occult expansion's seal: a heptagram {7/3}, one point for each of the Seven, inside a double ring.
+const HEPTA = Array.from({ length: 7 }, (_, i) => {
+  const a = -Math.PI / 2 + ((i * 3) % 7) * ((2 * Math.PI) / 7);
+  return `${i ? "L" : "M"}${(50 + 26 * Math.cos(a)).toFixed(1)} ${(50 + 26 * Math.sin(a)).toFixed(1)}`;
+}).join("") + "Z";
 const ART = {
+  // The occult expansion's own (occult.js, 2026-10-26): the crypt stair, the two ways, a star in its orbit, the seal of
+  // the Seven, the vessel and the Stone. Original line marks.
+  stair: '<path d="M20 90V40Q20 12 50 12Q80 12 80 40V90"/><path d="M28 90H40V78H52V66H64V54H72"/><path d="M50 28V38"/>',
+  ways: '<path d="M10 90V30H44V90M10 30L27 16L44 30"/><path d="M16 82Q38 76 30 62Q22 48 38 44Q50 40 42 28"/><path d="M56 90V36Q56 20 72 20Q88 20 88 36V90"/><path d="M72 50L79 61L72 72L65 61Z" fill="currentColor"/><path d="M72 42V50"/>',
+  orbit: '<ellipse cx="50" cy="52" rx="42" ry="15" transform="rotate(-18 50 52)"/><path d="M50 24L56 46L78 52L56 58L50 80L44 58L22 52L44 46Z"/><circle cx="88" cy="38" r="3.5" fill="currentColor"/>',
+  seal: `<circle cx="50" cy="50" r="40"/><circle cx="50" cy="50" r="33"/><path d="${HEPTA}"/><circle cx="50" cy="50" r="5" fill="currentColor"/>`,
+  alembic: '<path d="M38 18H62M44 18V40Q22 52 26 72Q30 90 50 90Q70 90 74 72Q78 52 56 40V18"/><path d="M56 30Q80 24 92 46M30 70H70"/>',
+  stone: '<path d="M50 10L82 36L68 88H32L18 36Z"/><path d="M18 36H82M50 10L38 36L50 88L62 36Z"/>',
+  // The Celestial Arcana's own (2026-10-26): the wheel of the sky, a struck tower, an eight-pointed star.
+  wheel: '<circle cx="50" cy="50" r="38"/><circle cx="50" cy="50" r="14"/><path d="M50 12V36M50 64V88M12 50H36M64 50H88M23 23L40 40M60 60L77 77M77 23L60 40M40 60L23 77"/>',
+  tower: '<path d="M34 90V34H66V90M30 34H70M38 34V24H62V34M44 90V72Q50 64 56 72V90"/><path d="M58 8L46 26H56L44 44" stroke-width="3"/>',
+  star: '<path d="M50 8L58 42L92 50L58 58L50 92L42 58L8 50L42 42Z"/><path d="M50 26L54 46L74 50L54 54L50 74L46 54L26 50L46 46Z" opacity=".55"/>',
+  relic_glass: '<circle cx="50" cy="38" r="25"/><circle cx="50" cy="38" r="17"/><path d="M45 63v27h10V63M36 38q14-16 28 0q-14 16-28 0z"/>',
+  relic_key: '<circle cx="28" cy="38" r="16"/><path d="M42 45l38 34M70 70l-8 9M60 61l-8 9M17 37q11-16 22 0"/>',
+  relic_halo: '<path d="M65 22a32 32 0 1 0 14 18M65 22l-8 13M79 40l-15 5"/>',
+  relic_crown: '<path d="M16 76l4-42l17 20l8-24M55 30l8 24l17-20l4 42M16 84h28M56 84h28M51 12l-9 26l16 20l-12 36"/>',
+  relic_lamp: '<path d="M32 30h36l4 48H28zM42 30V18h16v12M50 18V8M28 86h44M50 42l10 16l-10 14l-10-14z"/>',
+  relic_purse: '<path d="M36 20h28l-6 20q24 18 22 38q-2 14-30 14T20 78q-2-20 22-38zM36 40h28M42 14l8 8l8-8"/>',
+
   eye: '<path d="M8 50Q50 12 92 50Q50 88 8 50Z"/><circle cx="50" cy="50" r="15"/><circle cx="50" cy="50" r="6" fill="currentColor"/>',
   sun: `<circle cx="50" cy="50" r="16"/><circle cx="50" cy="50" r="7" fill="currentColor"/><path d="${RAYS}"/>`,
   blade: '<path d="M50 6L58 60L50 68L42 60Z"/><path d="M28 64H72M50 68V88"/><circle cx="50" cy="92" r="3.5"/>',
@@ -157,7 +231,7 @@ const TIER = ["the Warrens", "a whisper", "a wolf", "the Geometry"];
 const ARCH = "M66 318V160C66 104 104 70 150 52C196 70 234 104 234 160V318Z";
 const ARCH_IN = "M75 310V162C75 113 108 82 150 64C192 82 225 113 225 162V310Z";
 const corner = (x, y) => `<rect x="${x - 3.5}" y="${y - 3.5}" width="7" height="7" transform="rotate(45 ${x} ${y})"/>`;
-function face(key) {
+function face(key, adversary = null) {
   return `<svg class="face" viewBox="0 0 300 400" aria-hidden="true">
     <defs>
       <pattern id="fl-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(38)"><path d="M0 0V5" stroke="currentColor" stroke-width="1.1"/></pattern>
@@ -172,7 +246,7 @@ function face(key) {
       <path d="M44 318H256M110 326H190" opacity=".5"/>
     </g>
     <g fill="var(--gold)" opacity=".65">${corner(12, 12)}${corner(288, 12)}${corner(12, 388)}${corner(288, 388)}</g>
-    <g transform="translate(95 132) scale(1.1)" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" filter="url(#fl-glow)" style="color:var(--art)">${ART[key] || ART.eye}</g>
+    <g transform="${adversary ? "translate(100 246) scale(1)" : "translate(95 132) scale(1.1)"}" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" filter="url(#fl-glow)" style="color:var(--art)">${adversary ? EMBLEMS[adversary] || ART[key] : ART[key] || ART.eye}</g>
   </svg>`;
 }
 const ROMAN = [[100, "C"], [90, "XC"], [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]];
@@ -229,28 +303,76 @@ const markScore = (k) => {
 // ---------- the tracks: loops crossfaded at their seams, moods crossfaded into each other ----------
 // The Warrens and home play Vigil; the Light plays Communion; a Cascade plays the Geometry. When the
 // Light wears off, Communion's own sour tail plays as the Reckoning comes in, then Vigil returns
-// through a low-pass, muffled, while the Reckoning lasts.
-const MOOD_TRACK = { home: "vigil", warrens: "vigil", reckoning: "vigil", light: "light", cascade: "cascade", end: "vigil" };
-const MOOD_LEVEL = { home: 0.3, warrens: 0.42, reckoning: 0.36, light: 0.46, cascade: 0.44, end: 0.14 };
-const MOOD_CUT = { home: 18000, warrens: 18000, reckoning: 700, light: 18000, cascade: 18000, end: 500 };
+// through a low-pass, muffled, while the Reckoning lasts. A worn Mask plays her own track, held down under a
+// low-pass: the frequency you're operating from. When she seizes the wheel, the same track opens up, full and
+// loud, and it outranks the Cascade: she's the one deciding. The Bare Face plays Vigil. A "track@rate" key
+// plays a track slowed like tape (pitch drops with it), for a mood that has no file of its own.
+// Exodus (2026-10-13): THE DOMINION · LITANY OF CHAINS for the Inquisition, opening a little each phase
+// (enc_<id>_<phase>), and for the Ledger a touch slower. The Shepherd keeps Communion, slowed and held low: warmth
+// that isn't. REX MUNDI · THE ARCHITECT for the Grammar, held down until the Full Stop; the Festival is Communion
+// at full, the music of every Light you took, because it was always his. THE UNMAKING · THE WORLD WITHOUT A KING
+// plays under the Oldest Trap, held down, and opens on a Way Out's end screen; sitting in the chair gets the
+// Architect instead, slowed and muffled.
+const MOOD_TRACK = {
+  home: "vigil", warrens: "vigil", reckoning: "vigil", light: "light", cascade: "cascade", end: "vigil",
+  worn_nyx: "nyx", worn_eris: "eris", worn_lilith: "lilith", seized_nyx: "nyx", seized_eris: "eris", seized_lilith: "lilith",
+  enc_inquisition_0: "litany", enc_inquisition_1: "litany", enc_inquisition_2: "litany",
+  enc_hierarch_0: "litany", enc_hierarch_1: "litany", enc_hierarch_2: "litany",
+  enc_sentinel_0: "cascade@0.9", enc_sentinel_1: "cascade@0.9", enc_sentinel_2: "cascade@0.9",
+  enc_ledger_0: "litany@0.92", enc_ledger_1: "litany@0.92", enc_ledger_2: "litany@0.92",
+  enc_shepherd_0: "light@0.8", enc_shepherd_1: "light@0.8", enc_shepherd_2: "light@0.8",
+  enc_grammar_0: "architect", enc_grammar_1: "architect", enc_festival_0: "light", enc_festival_1: "light", enc_trap_0: "unmaking",
+  unmade: "unmaking", decreed: "architect@0.85",
+};
+const MOOD_LEVEL = {
+  home: 0.3, warrens: 0.42, reckoning: 0.36, light: 0.46, cascade: 0.44, end: 0.14,
+  worn_nyx: 0.36, worn_eris: 0.32, worn_lilith: 0.32, seized_nyx: 0.5, seized_eris: 0.48, seized_lilith: 0.48,
+  enc_inquisition_0: 0.34, enc_inquisition_1: 0.4, enc_inquisition_2: 0.48,
+  enc_hierarch_0: 0.32, enc_hierarch_1: 0.38, enc_hierarch_2: 0.46,
+  enc_sentinel_0: 0.30, enc_sentinel_1: 0.36, enc_sentinel_2: 0.44,
+  enc_ledger_0: 0.32, enc_ledger_1: 0.38, enc_ledger_2: 0.46,
+  enc_shepherd_0: 0.3, enc_shepherd_1: 0.34, enc_shepherd_2: 0.4,
+  enc_grammar_0: 0.36, enc_grammar_1: 0.46, enc_festival_0: 0.48, enc_festival_1: 0.52, enc_trap_0: 0.3,
+  unmade: 0.44, decreed: 0.22,
+};
+const MOOD_CUT = {
+  home: 18000, warrens: 18000, reckoning: 700, light: 18000, cascade: 18000, end: 500,
+  worn_nyx: 2600, worn_eris: 2200, worn_lilith: 3200, seized_nyx: 18000, seized_eris: 18000, seized_lilith: 18000,
+  enc_inquisition_0: 1600, enc_inquisition_1: 3200, enc_inquisition_2: 18000,
+  enc_hierarch_0: 1600, enc_hierarch_1: 3000, enc_hierarch_2: 18000,
+  enc_sentinel_0: 1400, enc_sentinel_1: 2400, enc_sentinel_2: 8000,
+  enc_ledger_0: 1400, enc_ledger_1: 2600, enc_ledger_2: 18000,
+  enc_shepherd_0: 1800, enc_shepherd_1: 1500, enc_shepherd_2: 1100,
+  enc_grammar_0: 1800, enc_grammar_1: 18000, enc_festival_0: 18000, enc_festival_1: 18000, enc_trap_0: 1400,
+  unmade: 18000, decreed: 900,
+};
 const XF = 4; // seconds: loop seams and mood changes
 // Each pass streams through an <audio> element into the Web Audio graph. Decoding whole tracks into
 // AudioBuffers would cost ~175 MB of PCM for the full score on a phone; a stream holds a few seconds.
 const T = { bus: null, lp: null, cur: null, poll: null, wait: null, failed: false, voices: new Set() };
 function voiceOf(k, fade, to = T.lp) {
-  const el = new Audio(TRACKS[k]);
+  const [file, rate] = k.split("@");
+  const el = new Audio(TRACKS[file]);
   el.preload = "auto";
+  if (rate) {
+    // Slowed like tape, so the pitch drops with it.
+    el.preservesPitch = el.mozPreservesPitch = el.webkitPreservesPitch = false;
+    el.defaultPlaybackRate = el.playbackRate = Number(rate);
+  }
   const node = ac.createMediaElementSource(el);
   const g = ac.createGain();
   const t = ac.currentTime;
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(1, t + fade);
+  if (!POLISHED_LOOPS.has(file)) g.gain.exponentialRampToValueAtTime(1, t + fade);
   node.connect(g).connect(to);
   const v = { k, el, node, g, ready: null };
   let refuse;
   v.ready = new Promise((ok, no) => {
     refuse = no;
-    el.addEventListener("playing", ok, { once: true });
+    el.addEventListener("playing", () => {
+      if (POLISHED_LOOPS.has(file)) g.gain.setValueCurveAtTime(loopFadeCurve("in"), ac.currentTime, fade);
+      ok();
+    }, { once: true });
     el.addEventListener("error", () => no(new Error(`track ${k} failed`)), { once: true });
   });
   // Any track failing (offline, a partial cache) hands the whole score to the procedural fallback. So does
@@ -274,17 +396,28 @@ function dropVoice(v) {
 function fadeVoice(v, d) {
   if (!v) return;
   const t = ac.currentTime;
-  v.g.gain.cancelScheduledValues(t);
-  v.g.gain.setValueAtTime(Math.max(0.0001, v.g.gain.value), t);
-  v.g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  const heldGain = Math.max(0.0001, v.g.gain.value);
+  v.g.gain.cancelScheduledValues(0);
+  v.g.gain.setValueAtTime(heldGain, t);
+  if (POLISHED_LOOPS.has(v.k.split("@")[0])) {
+    const level = heldGain;
+    v.g.gain.setValueCurveAtTime(loopFadeCurve("out").map((n) => n * level), t, d);
+  } else v.g.gain.exponentialRampToValueAtTime(0.0001, t + d);
   setTimeout(() => dropVoice(v), d * 1000 + 150);
 }
 function seams() {
   const v = T.cur;
-  if (!v || !score.on || !isFinite(v.el.duration) || v.el.paused) return;
-  if (v.el.currentTime >= v.el.duration - XF) {
-    T.cur = voiceOf(v.k, XF);
-    fadeVoice(v, XF);
+  if (!v || !score.on || v.looping || v.el.paused) return;
+  if (loopDue(v.el.currentTime, v.el.duration, v.el.playbackRate, XF)) {
+    v.looping = true;
+    const next = voiceOf(v.k, XF);
+    // Keep the old pass audible while the stream buffers. A mood change meanwhile
+    // owns the score; its stale incoming loop is discarded.
+    next.ready.then(() => {
+      if (!score.on || T.cur !== v) return dropVoice(next);
+      T.cur = next;
+      fadeVoice(v, XF);
+    }).catch(() => {});
   }
 }
 function playTrack(k) {
@@ -322,6 +455,11 @@ function trackMood(m, from) {
     return;
   }
   playTrack(MOOD_TRACK[m]);
+  // A seizure is sudden: the filter and the level open in about a second, not the usual glide.
+  if (m.startsWith("seized_")) {
+    T.bus.gain.setTargetAtTime(MOOD_LEVEL[m], t, 0.35);
+    T.lp.frequency.setTargetAtTime(MOOD_CUT[m], t, 0.3);
+  }
 }
 function startTracks() {
   if (T.failed) return Promise.reject(new Error("tracks unavailable"));
@@ -355,6 +493,7 @@ function startScore() {
   }
   score.on = true;
   startTracks().catch(() => score.on && !score.kind && startSynth());
+  motifTick();
 }
 
 // ---------- the fallback: a procedural ambient bed that follows the run ----------
@@ -367,8 +506,29 @@ const MOODS = {
   light: { cut: 1500, third: 138.59, thirdG: 0.16, shim: 0.05, sour: 4, wind: 0.015, gain: 0.06 },
   reckoning: { cut: 240, third: 130.81, thirdG: 0.05, shim: 0, sour: 31, wind: 0.07, gain: 0.05 },
   cascade: { cut: 620, third: 123.47, thirdG: 0.12, shim: 0, sour: 46, wind: 0.08, gain: 0.06 },
+  worn_nyx: { cut: 460, third: 130.81, thirdG: 0.1, shim: 0, sour: 7, wind: 0.045, gain: 0.055 },
+  worn_eris: { cut: 460, third: 130.81, thirdG: 0.1, shim: 0, sour: 7, wind: 0.045, gain: 0.055 },
+  worn_lilith: { cut: 460, third: 130.81, thirdG: 0.1, shim: 0, sour: 7, wind: 0.045, gain: 0.055 },
+  seized_nyx: { cut: 230, third: 123.47, thirdG: 0.05, shim: 0, sour: 18, wind: 0.1, gain: 0.05 },
+  seized_eris: { cut: 820, third: 123.47, thirdG: 0.14, shim: 0, sour: 38, wind: 0.05, gain: 0.062 },
+  seized_lilith: { cut: 1700, third: 138.59, thirdG: 0.12, shim: 0.06, sour: 24, wind: 0.02, gain: 0.058 },
   end: { cut: 200, third: 130.81, thirdG: 0, shim: 0, sour: 7, wind: 0.02, gain: 0 },
+  // Exodus's end screens: a Way Out (major, open, a little shimmer) and the chair (low, sour, nearly gone).
+  unmade: { cut: 1300, third: 138.59, thirdG: 0.14, shim: 0.04, sour: 3, wind: 0.015, gain: 0.05 },
+  decreed: { cut: 260, third: 123.47, thirdG: 0.04, shim: 0, sour: 26, wind: 0.04, gain: 0.03 },
 };
+// The adversaries on the procedural score: the Inquisition and the Ledger grind (sour, minor), the Shepherd glows a
+// little too warm, the Grammar is a muffled drone, the Festival is all shimmer, the Oldest Trap is nearly silent.
+for (const [k, m] of Object.entries({
+  inquisition: { cut: 540, third: 123.47, thirdG: 0.1, shim: 0, sour: 38, wind: 0.07, gain: 0.058 },
+  hierarch: { cut: 580, third: 123.47, thirdG: 0.10, shim: 0, sour: 34, wind: 0.06, gain: 0.055 },
+  sentinel: { cut: 420, third: 123.47, thirdG: 0.07, shim: 0, sour: 40, wind: 0.04, gain: 0.052 },
+  ledger: { cut: 500, third: 123.47, thirdG: 0.08, shim: 0, sour: 28, wind: 0.06, gain: 0.055 },
+  shepherd: { cut: 900, third: 138.59, thirdG: 0.12, shim: 0.025, sour: 12, wind: 0.02, gain: 0.052 },
+  grammar: { cut: 300, third: 123.47, thirdG: 0.06, shim: 0, sour: 22, wind: 0.09, gain: 0.05 },
+  festival: { cut: 1800, third: 138.59, thirdG: 0.16, shim: 0.07, sour: 5, wind: 0.01, gain: 0.062 },
+  trap: { cut: 220, third: 130.81, thirdG: 0.03, shim: 0, sour: 3, wind: 0.03, gain: 0.04 },
+})) for (const p of [0, 1, 2]) MOODS[`enc_${k}_${p}`] = { ...m, cut: m.cut * (1 + p * 0.35) };
 function startSynth() {
   try {
     const t = ac.currentTime;
@@ -483,8 +643,104 @@ function stopScore() {
   markScore(null);
   score.mood = null;
 }
-// The Reckoning card itself counts as the Reckoning: that is the moment the gold drains out.
-const runMood = (s) => (s.communion > 0 ? "light" : s.reckoning > 0 || s.cardId === "reckoning" ? "reckoning" : s.cascade ? "cascade" : "warrens");
+// The Reckoning card itself counts as the Reckoning: that is the moment the gold drains out. The Light outranks
+// a seized Mask (in the Light no Mask answers); a seized Mask outranks the Cascade (it's the one deciding); the
+// Cascade outranks a Mask merely worn.
+const inLight = (s) => s.communion > 0 || s.reckoning > 0 || s.cardId === "reckoning";
+// In Exodus an adversary's music outranks a Mask's (it's their room), but not the Light or the Reckoning.
+const encMood = (s) => {
+  const e = s.asc && s.asc.enc;
+  const k = e && `enc_${e.id}_${e.phase}`;
+  return k && MOOD_TRACK[k] ? k : null;
+};
+const runMood = (s) =>
+  s.communion > 0 ? "light"
+  : s.reckoning > 0 || s.cardId === "reckoning" ? "reckoning"
+  : encMood(s) ? encMood(s)
+  : s.maskLocked && MASKS[s.mask].seized ? "seized_" + s.mask
+  : s.cascade ? "cascade"
+  : MASKS[s.mask].seized ? "worn_" + s.mask : "warrens";
+
+// ---------- the Masks' figures, for the procedural score ----------
+// The tracks carry each Mask's own music. When the fallback plays instead, each Mask worn gets a figure on top of
+// it, quiet while worn, loud while it holds the wheel.
+// Nyx: a cold minor second sinking in the dark. Eris: a struck blade on the beat. Lilith: a high fifth that
+// swells and slides like a serpent. The Bare Face has none: the Vigil is already her song. In the Light the
+// figures stop, because no Mask answers there. Played through the Music toggle, like the rest of the score.
+const MOTIF = {
+  nyx: { every: 3400, seized: 1900, gain: 0.05, notes: [[164.81, 0], [155.56, 0.9]], dur: 2.8, type: "sine", cut: 900 },
+  eris: { every: 920, seized: 620, gain: 0.035, notes: [[2349, 0], [1760, 0.012]], dur: 0.18, type: "square", cut: 4200, accent: 4 },
+  lilith: { every: 5200, seized: 2600, gain: 0.03, notes: [[880, 0], [1318.5, 0.35]], dur: 3.6, type: "sine", cut: 6000, slide: 0.97 },
+};
+const L = { out: null, timer: null, beat: 0, k: null };
+const layerFor = () =>
+  score.on && score.kind === "synth" && musicOn() && run && !run.over && !$("app").hidden && !inLight(run) && MOTIF[run.mask] ? { k: run.mask, seized: !!run.maskLocked } : null;
+function motifTick() {
+  clearTimeout(L.timer);
+  const want = layerFor();
+  if (!want || document.hidden || !ac || ac.state !== "running") {
+    L.k = null;
+    L.timer = setTimeout(motifTick, 1000);
+    return;
+  }
+  const m = MOTIF[want.k];
+  if (L.k !== want.k) (L.k = want.k), (L.beat = 0);
+  try {
+    if (!L.out) {
+      L.out = ac.createGain();
+      L.out.gain.value = 1;
+      L.out.connect(ac.destination);
+    }
+    const t = ac.currentTime + 0.02;
+    const loud = (want.seized ? 1.8 : 1) * (m.accent && L.beat % m.accent === 0 ? 1.6 : 1);
+    const lp = ac.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = m.cut;
+    lp.connect(L.out);
+    for (const [f, at] of m.notes) {
+      const o = ac.createOscillator();
+      const g = ac.createGain();
+      o.type = m.type;
+      o.frequency.setValueAtTime(f, t + at);
+      if (m.slide) o.frequency.exponentialRampToValueAtTime(f * m.slide, t + at + m.dur);
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(m.gain * loud, t + at + Math.min(0.6, m.dur / 3));
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + m.dur);
+      o.connect(g).connect(lp);
+      o.start(t + at);
+      o.stop(t + at + m.dur + 0.05);
+    }
+    setTimeout(() => lp.disconnect(), (m.dur + 1.2) * 1000);
+  } catch {}
+  L.beat++;
+  L.timer = setTimeout(motifTick, want.seized ? m.seized : m.every);
+}
+// The moment a Mask takes the wheel, on the procedural score: its figure, struck hard and low, once. (On the
+// tracks, her own track opening up is the moment.)
+function takeover(k) {
+  const m = MOTIF[k];
+  if (!m || !musicOn() || !ac || score.kind !== "synth") return;
+  try {
+    const t = ac.currentTime;
+    [[m.notes[0][0] / 4, 0.12], [m.notes[0][0] / 2, 0.08], [m.notes[m.notes.length - 1][0] / 2, 0.06]].forEach(([f, g], i) => {
+      const o = ac.createOscillator();
+      const v = ac.createGain();
+      o.type = i ? "triangle" : "sawtooth";
+      o.frequency.setValueAtTime(f, t);
+      o.frequency.exponentialRampToValueAtTime(f * 0.94, t + 2.4);
+      v.gain.setValueAtTime(0.0001, t);
+      v.gain.exponentialRampToValueAtTime(g, t + 0.03);
+      v.gain.exponentialRampToValueAtTime(0.0001, t + 2.6);
+      o.connect(v).connect(ac.destination);
+      o.start(t);
+      o.stop(t + 2.7);
+    });
+  } catch {}
+}
+// A hidden page stops the home sigil's filter animation (CSS keys off this class).
+const markHidden = () => document.documentElement.classList.toggle("page-hidden", document.hidden);
+document.addEventListener("visibilitychange", markHidden);
+markHidden();
 document.addEventListener("visibilitychange", () => {
   if (!ac) return;
   // Streams keep advancing on their own clock, so they pause with the page too.
@@ -566,6 +822,7 @@ function buildHud() {
     $(id).onclick = (e) => run && !e.target.closest(".bond") && toast(TRACK_INFO[k](board()));
   }
   $("bell").onclick = () => run && toast(bellInfo(board()));
+  $("sky").onclick = () => run && run.arc && skySheet(board());
   $("masks").innerHTML = Object.entries(MASKS)
     .map(([k, m]) => `<button class="mask" id="k-${k}" type="button">${svg(MASK_ART[k], 5)}<span class="nm">${m.name.toUpperCase()}</span><span class="cost"></span></button>`)
     .join("");
@@ -639,7 +896,9 @@ const TRACK_INFO = {
   cage: (s) => `The Cage ${s.cage}/8. It grows when help comes without terms. At 8 it closes.`,
 };
 const bellInfo = (s) =>
-  `The Bell: card ${Math.min(s.bell + 1, CARDS_PER_DAY)} of ${CARDS_PER_DAY} today. After card ${CARDS_PER_DAY}, nightfall: no Favor or a full Hollow ends the run, and a night without rest adds Hollow.`;
+  encOf(s)
+    ? `The Bell is held for the fight, at card ${Math.min(s.bell + 1, CARDS_PER_DAY)} of ${CARDS_PER_DAY}: no night falls until the fight ends, and then one does.`
+    : `The Bell: card ${Math.min(s.bell + 1, CARDS_PER_DAY)} of ${CARDS_PER_DAY} today. After card ${CARDS_PER_DAY}, nightfall: no Favor or a full Hollow ends the run, and a night without rest adds Hollow.`;
 // view: a board to show instead of the run (the card's own result, under its slip; see commit()).
 function renderHud(view = null) {
   const s = (drawn = view || run);
@@ -676,10 +935,11 @@ function renderHud(view = null) {
   $("t-cage").hidden = !s.cageSeen;
   if (s.cageSeen) fill("t-cage", s.cage, 8);
   // After fill(), which rewrites each number and would take a float with it.
+  const inFight = !!encOf(s);
   for (const [k, id] of Object.entries(TRACK_EL)) {
     if (k === "cage" && !s.cageSeen) continue;
     if (lastVals[k] !== undefined && lastVals[k] !== s[k]) {
-      floatDelta($(id).querySelector(".n"), k, s[k] - lastVals[k]);
+      floatDelta(inFight && (k === "untag" || k === "gnosis") ? $("t-sum") : $(id).querySelector(".n"), k, s[k] - lastVals[k]);
       if ((k === "untag" || k === "gnosis") && s[k] > lastVals[k]) coach("goal", "Fill both UNTAGGABLE and GNOSIS and you win. That's the Double Crown.");
     }
     lastVals[k] = s[k];
@@ -694,9 +954,42 @@ function renderHud(view = null) {
   if (s.bonds.length && !(lastVals.bonds >= s.bonds.length)) coach("bond", "A Bond catches you once, from one kind of ending. Earn all three, get a room at the House, rest through a night: Ordinary Time.");
   lastVals.bonds = s.bonds.length;
   $("day").textContent = s.day;
-  $("mode-lbl").textContent = s.mode === "vigil" ? `VIGIL #${vigilNumber(s.seedLabel)}` : "ENDLESS";
+  // In a fight the top bar is the fight's: who, which phase, which card of how many. The Bell is held.
+  const fight = encOf(s);
+  const fdef = fight && ENCOUNTERS[fight.id];
+  const pname = fdef && fdef.phases[fight.phase].name;
+  const phase = pname && pname !== fdef.name && !fdef.name.endsWith(pname) ? ` · ${pname.toUpperCase()}` : "";
+  $("mode-lbl").textContent = s.mode === "vigil" ? `VIGIL #${vigilNumber(s.seedLabel)}`
+    : fight ? `${fdef.short.toUpperCase()}${phase} · ${Math.min(fight.turn + 1, fdef.cap)}/${fdef.cap}`
+    : s.mode === "ascension" ? `EXODUS ${ROMAN_ACT[s.asc.act]}${s.asc.edict ? ` · EDICT ${roman(s.asc.edict)}` : ""}` : "ENDLESS";
+  if (fight) $("mode-lbl").innerHTML = `<span class="enc-name">${esc(fdef.short.toUpperCase() + phase)}</span><span class="enc-turn"> · ${Math.min(fight.turn + 1, fdef.cap)}/${fdef.cap}</span>`;
+  $("night-lbl").hidden = !!fight;
+  $("bell").classList.toggle("held", !!fight);
+  // The sky (arcana.js): today's planet, tapped for the whole reading. Hidden in a fight, whose bar is its own.
+  const sky = !!(s.arc && !fight);
+  $("sky").hidden = !sky;
+  if (sky) {
+    const t = skyToday(s);
+    $("sky").textContent = `· ${PLANETS[t.p].glyph}\uFE0E`;
+    $("sky").setAttribute("aria-label", `The sky: ${PLANETS[t.p].day}, ${PLANETS[t.p].name} ${DIGNITY_WORD[t.d]} in ${SIGNS[s.arc.sign].name}. The reading.`);
+  }
+  const pullOn = !!(s.asc && s.asc.apoSeen && !fight);
+  $("pull").hidden = !pullOn;
+  if (pullOn) {
+    $("pull").textContent = `· PULL ${s.apo}/6`;
+    $("pull").classList.toggle("hot", s.apo >= 4);
+    if (lastVals.apo !== undefined && lastVals.apo !== s.apo) floatDelta($("pull"), "apo", s.apo - lastVals.apo);
+  } else if (fight && s.asc.apoSeen && lastVals.apo !== undefined && lastVals.apo !== s.apo) floatDelta($("t-sum"), "apo", s.apo - lastVals.apo);
+  lastVals.apo = s.apo;
+  document.body.dataset.mode = s.mode;
+  document.body.dataset.act = s.asc ? s.asc.act : "";
+  document.body.dataset.adversary = fight ? fight.id : "";
+  document.body.classList.toggle("asc", s.mode === "ascension");
+  document.body.classList.toggle("fight", !!fight);
+  renderRelics(s);
+  renderEnc(s);
   $("bell").querySelectorAll("i").forEach((i, n) => i.classList.toggle("on", n < s.bell));
-  $("bell").setAttribute("aria-label", `The Bell: ${s.bell} of ${CARDS_PER_DAY} cards today`);
+  $("bell").setAttribute("aria-label", fight ? `The Bell, held for the fight: ${s.bell} of ${CARDS_PER_DAY} cards today` : `The Bell: ${s.bell} of ${CARDS_PER_DAY} cards today`);
   for (const k of Object.keys(MASKS)) {
     const b = $("k-" + k);
     const c = maskStrain(s, k);
@@ -712,6 +1005,7 @@ function renderHud(view = null) {
     ? `Seized by ${m.name} until nightfall · breaking free costs +${maskStrain(s, s.mask === "bare" ? "nyx" : "bare")} Strain`
     : `${m.name}: ${m.bonus} · ${m.risk}`;
   $("app").classList.toggle("seized", !!s.maskLocked);
+  for (const k of Object.keys(MASKS)) document.body.classList.toggle("seized-" + k, !!s.maskLocked && s.mask === k);
   setSeal(s.mask);
   document.body.classList.toggle("communion", s.communion > 0);
   document.body.classList.toggle("reckoning", s.reckoning > 0 && s.communion === 0);
@@ -723,15 +1017,32 @@ function renderHud(view = null) {
 
 function renderCard(deal = true) {
   const c = currentCard(run);
+  const fight = encOf(run);
   $("say").textContent = c.text;
   $("who").textContent = c.who;
-  $("art").innerHTML = face(c.art);
-  $("numeral").textContent = c.tutorial ? "0" : CARD_NO[c.id] || "";
-  const tone_ = c.art === "sun" ? "var(--sun)" : c.tier === 3 ? "var(--porphyra)" : c.tier === 2 ? "var(--alert)" : "var(--magenta)";
+  $("art").innerHTML = face(c.art, c.enc);
+  $("numeral").textContent = c.tutorial ? "0" : c.numeral || CARD_NO[c.id] || "";
+  // A reversed Arcanum is drawn as it lies: upside down.
+  $("art").classList.toggle("rev", !!c.flip);
+  // In a fight the adversary takes the card's two ends: its intent at the top, its clock and roads at the bottom.
+  $("numeral").hidden = $("tier").hidden = !!fight;
+  const tone_ = c.art === "sun" ? "var(--sun)" : c.tier === 3 || c.enc ? "var(--porphyra)" : c.tier === 2 ? "var(--alert)" : "var(--magenta)";
   $("card").style.setProperty("--art", tone_);
-  $("tier").textContent = c.tutorial ? "first light" : TIER[c.tier] || "";
-  $("go-left").innerHTML = "◀ " + esc(c.left.label);
-  $("go-right").innerHTML = esc(c.right.label) + " ▶";
+  // The occult expansion's cards draw their own border (index.html): a rite, the two ways, an account, the Seat.
+  if (c.frame) $("card").dataset.occ = c.frame;
+  else delete $("card").dataset.occ;
+  $("tier").textContent = c.tutorial ? "first light" : c.tierText || TIER[c.tier] || "";
+  // In Exodus each choice carries a second line (choiceTag), filled by refreshChoices.
+  $("go-left").innerHTML = "◀ " + esc(c.left.label) + (run.asc ? '<span class="tag"></span>' : "");
+  $("go-right").innerHTML = esc(c.right.label) + " ▶" + (run.asc ? '<span class="tag"></span>' : "");
+  // The Two Rites: each way in its own colour, neither of them gold.
+  $("go-left").classList.toggle("way-serpent", c.frame === "ways");
+  $("go-right").classList.toggle("way-return", c.frame === "ways");
+  renderEnc(board());
+  if (fight && fight.intent) {
+    meta.asc.seen[fight.intent] = 1;
+    saveMeta();
+  }
   refreshChoices();
   const card = $("card");
   armedSide = null; // a choice armed on another card, or in another run, isn't this one's
@@ -743,13 +1054,15 @@ function renderCard(deal = true) {
     card.classList.add(c.tutorial ? "nudge" : "enter");
   }
   showPreview(null, 0);
-  if (c.art === "sun") sfx.light();
+  if (c.art === "sun" && !c.enc) sfx.light();
   // The Light's bargain is said when it's first offered, so the first choice about it is an informed one.
   if (c.id === "whisper") coach("light", "The Light takes Strain and Hollow away now, and Gnosis can't rise while it lasts. The Reckoning comes after.", true);
   if ($("coach").hidden) coachResume(); // a line the Light cut short on an earlier card
   if (!c.tutorial) maskHint(c);
   if (previewOf("left").lethal || previewOf("right").lethal) coach("lethal", `${SKULL} marks a choice that can end your run. Drag the card or tap a choice to see the odds.`);
   if (cardCosts(run).length) coach("cost", "Some cards cost you either way. When they do, it's written under the card.");
+  if (fight && fight.intent) coach("intent", "Top of the card: what the adversary does this card, and what it means to do next. A choice marked ✓ stops it.");
+  if (fight && Object.keys(fight.roads).length) coach("roads", "Above the card: its clock, and your roads out. Fill a road and you can stop there; let the clock fill and it's over.");
   if (!c.tutorial && meta.plays >= 1) coach("inspect", "Tap any meter, track or the dots of the Bell to see what it means. Hold a Mask to read it.");
 }
 
@@ -762,22 +1075,42 @@ function refreshChoices() {
     const b = $(side === "left" ? "go-left" : "go-right");
     b.classList.toggle("lethal", !!p.lethal);
     b.classList.toggle("crown", !!p.crown);
+    b.classList.toggle("answers", !!(p.enc && p.enc.answers));
+    b.classList.toggle("refuses", !!(p.enc && p.enc.refuses && !p.enc.answers));
+    b.classList.toggle("sealed", !!(p.enc && p.enc.sealed));
+    b.classList.toggle("kept", !!p.kept);
+    const tag = b.querySelector(".tag");
+    if (tag) {
+      tag.innerHTML = choiceTag(p, c[side]);
+      tag.hidden = !tag.innerHTML;
+    }
     b.title = p.lethal ? "Can end your run" : p.crown ? "Can win the run" : "";
-    b.setAttribute("aria-label", c[side].label + spokenPreview(p));
+    b.setAttribute("aria-label", (c[side].verb ? VERBS[c[side].verb] + ": " : "") + c[side].label + spokenPreview(p));
   }
 }
 // What the lit vials and the odds line show a sighted player, said in the choice's name: which meters and tracks
 // move (never which way), the roll's odds, a Bond it may spend, and whether it can end or win the run.
-const SPOKEN = { mark: "Mark", strain: "Strain", favor: "Favor", hollow: "Hollow", longing: "Longing", untag: "Untaggable", gnosis: "Gnosis", cage: "the Cage" };
+const SPOKEN = { mark: "Mark", strain: "Strain", favor: "Favor", hollow: "Hollow", longing: "Longing", untag: "Untaggable", gnosis: "Gnosis", cage: "the Cage", apo: "the Pull" };
 function spokenPreview(p) {
   const list = (xs) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
   const moved = [...p.meters, ...p.tracks].map((k) => SPOKEN[k]);
   const out = [];
   if (p.lethal) out.push(`Can end your run, ${pct(p.lethal.p)}`);
   if (p.crown) out.push(`Can win the run, ${pct(p.crown.p)}`); // both, when both: the odds line shows both
+  if (p.kept) out.push(`Can end the run seated, ${pct(p.kept.p)}`);
   if (moved.length) out.push(`Moves ${list(moved)}`);
   if (p.roll) out.push(`${STAT_LABEL[p.roll.stat]} roll: ${pct(p.roll.hit)} clean, ${pct(p.roll.mid)} at a cost, ${pct(p.roll.miss)} worse`);
   for (const bd of p.bonds || []) out.push(bd.p >= 0.999 ? `Spends ${BONDS[bd.k].name}` : `${pct(bd.p)} to spend ${BONDS[bd.k].name}`);
+  const e = encOf(run);
+  if (p.enc && e) {
+    const def = ENCOUNTERS[e.id];
+    const it = e.intent && INTENTS[e.intent];
+    if (it) out.unshift(p.enc.answers ? `Answers the ${it.name}` : `The ${it.name} lands`);
+    if (p.enc.sealed) out.push("Sealed");
+    if (p.enc.clock) out.push(def.clock.hidden && !run.cageSeen ? "Moves something that closes" : `Moves ${def.clock.label}`);
+    if (p.enc.roads.length) out.push(`Moves ${list(p.enc.roads.map((k) => def.roads[k].label))}`);
+    if (p.enc.resolves) out.push(`${pct(p.enc.resolves.p)} to end the fight`);
+  }
   return out.map((x) => ". " + x).join("");
 }
 
@@ -798,6 +1131,7 @@ const END_REASON = {
   named: "Mark hits 6", fracture: "Strain hits 6", fracture_reckoning: "Strain hits 6", destitute: "no Favor at nightfall",
   collapse: "Hollow full at nightfall", billet: "they follow you home", rex: "you become what you fought",
   flag: "you take up the old flag", corner: "the wagon takes you",
+  catalogued: "the File fills", fluent: "the Grammar fills", gilded: "noon at the Festival",
 };
 function lethalText(l) {
   const reasons = [...new Set(l.endings.map((e) => (e === "cage" ? (run.cageSeen ? "the Cage closes" : "something closes") : END_REASON[e.startsWith("named") ? "named" : e])))];
@@ -808,8 +1142,15 @@ const winName = (c) => (c.endings && c.endings.length === 1 ? ENDINGS[c.endings[
 const pct = (x) => (x > 0 && x < 0.01 ? "<1" : Math.round(x * 100)) + "%";
 function oddsLine(p) {
   const parts = [];
+  const e = encOf(run);
+  if (p.enc && e) {
+    const it = e.intent && INTENTS[e.intent];
+    if (it) parts.push(p.enc.answers ? `<b class="answers">✓ ${esc(it.name)}</b>` : `<b class="lands">${esc(it.name)} lands</b>`);
+    if (p.enc.resolves) parts.push(`<b class="clears">${p.enc.resolves.p >= 0.999 ? "ends the fight" : pct(p.enc.resolves.p) + " ends it"}</b>`);
+  }
   if (p.lethal) parts.push(`<b class="lethal">${SKULL} ${p.lethal.p >= 0.999 ? lethalText(p.lethal) : pct(p.lethal.p)}</b>`);
   if (p.crown) parts.push(`<b class="crown">${CROWN} ${p.crown.p >= 0.999 ? winName(p.crown) : pct(p.crown.p)}</b>`);
+  if (p.kept) parts.push(`<b class="kept">☀ ${p.kept.p >= 0.999 ? esc(ENDINGS[p.kept.endings[0]].title) : pct(p.kept.p)}</b>`);
   for (const b of p.bonds || []) parts.push(`<b class="bondcost">${svg(BOND_ART[b.k], 6)} ${b.p >= 0.999 ? `spends ${BONDS[b.k].name}` : `${pct(b.p)} to spend ${BONDS[b.k].name}`}</b>`);
   if (p.roll) {
     const r = p.roll;
@@ -822,14 +1163,14 @@ function oddsLine(p) {
 // The line under the card is one line. Alone, a fact gets its full sentence; two or more share it in their short
 // forms, the clocks first (the Light's, the Reckoning's, nightfall's). Two always fit; when three meet on a narrow
 // phone, what runs off the end is a Mask's cost, which the lit vials and tracks still show.
-const IDLE_ORDER = ["light", "fading", "night", "rested", "wolf", "nyx", "eris"];
+const IDLE_ORDER = ["seal", "chair", "gate", "out", "reckon", "cascade", "light", "fading", "night", "rested", "wolf", "nyx", "eris"];
 function idleLine() {
   const parts = cardCosts(run).map((c) => ({ ...c, cls: "costline" }));
   // State that runs on a clock the board doesn't otherwise show.
   const c = currentCard(run);
   if (run.communion > 1 && c.id !== "whisper" && c.id !== "reckoning")
     parts.push({ id: "light", cls: "statusline", text: `In the Light · ${run.communion} cards left, then the Reckoning`, short: `Light: ${run.communion} cards left` });
-  if (run.bell === CARDS_PER_DAY - 1 && run.restedToday && !c.tutorial)
+  if (run.bell === CARDS_PER_DAY - 1 && run.restedToday && !c.tutorial && !encOf(run))
     parts.push({ id: "rested", cls: "statusline", text: "Nightfall after this card. You rested today", short: "Nightfall: rested" });
   const many = parts.length > 1;
   if (many) parts.sort((a, b) => IDLE_ORDER.indexOf(a.id) - IDLE_ORDER.indexOf(b.id));
@@ -838,7 +1179,7 @@ function idleLine() {
 
 function showPreview(side, strength) {
   document.querySelectorAll(".meter .dot").forEach((d) => d.classList.remove("on"));
-  document.querySelectorAll(".track.hot").forEach((t) => t.classList.remove("hot"));
+  document.querySelectorAll(".track.hot,.road.hot,#pull.lit").forEach((t) => t.classList.remove("hot", "lit"));
   const lab = $("choice");
   $("go-left").classList.toggle("hot", side === "left");
   $("go-right").classList.toggle("hot", side === "right");
@@ -849,8 +1190,15 @@ function showPreview(side, strength) {
   }
   const p = previewOf(side);
   for (const k of p.meters) $("m-" + k).querySelector(".dot").classList.add("on");
-  for (const k of p.tracks) $(TRACK_EL[k]).classList.add("hot");
-  lab.innerHTML = esc(p.label) + (p.lethal ? `<span class="warn">${SKULL} ${p.lethal.p >= 0.999 ? "ends your run" : pct(p.lethal.p) + " to end your run"}</span>` : p.crown ? `<span class="win">${CROWN} ${p.crown.p >= 0.999 ? winName(p.crown) : pct(p.crown.p) + " to win"}</span>` : "");
+  for (const k of p.tracks) if (TRACK_EL[k] && !$(TRACK_EL[k]).hidden) $(TRACK_EL[k]).classList.add("hot");
+  if (p.tracks.includes("apo")) $("pull").classList.add("lit");
+  const fe = encOf(run);
+  if (fe && p.tracks.some((k) => k === "untag" || k === "gnosis" || (k === "apo" && ENCOUNTERS[fe.id].clock.key !== "apo"))) $("t-sum").classList.add("hot");
+  if (p.enc) {
+    if (p.enc.clock) $("t-clock").classList.add("hot");
+    for (const k of p.enc.roads) if ($("enc-road-" + k)) $("enc-road-" + k).classList.add("hot");
+  }
+  lab.innerHTML = esc(p.label) + (p.lethal ? `<span class="warn">${SKULL} ${p.lethal.p >= 0.999 ? "ends your run" : pct(p.lethal.p) + " to end your run"}</span>` : p.crown ? `<span class="win">${CROWN} ${p.crown.p >= 0.999 ? winName(p.crown) : pct(p.crown.p) + " to win"}</span>` : p.kept ? `<span class="win">☀ ${p.kept.p >= 0.999 ? esc(ENDINGS[p.kept.endings[0]].title) : pct(p.kept.p) + " to end seated"}</span>` : "");
   lab.className = "choice" + (side === "right" ? " r" : "");
   lab.style.opacity = Math.min(1, strength * 1.6);
   $("odds").innerHTML = oddsLine(p);
@@ -859,30 +1207,51 @@ function showPreview(side, strength) {
 }
 
 // ---------- swiping ----------
+// The release is judged from how the pointer was moving at the end (swipe.js), not averaged over the whole drag, and a
+// drag that starts out vertical is not a swipe. Moves are only noted as they arrive; the card and its preview are
+// drawn once a frame, since a fast pointer reports several times per frame and each report used to rewrite both.
 function bindSwipe() {
   const card = $("card");
   let drag = null;
+  let frame = 0;
+  const paint = () => {
+    frame = 0;
+    if (!drag || drag.axis !== "x") return;
+    const dx = drag.dx;
+    card.style.transform = `translateX(${dx}px) rotate(${dx / 16}deg)`;
+    showPreview(dx < -18 ? "left" : dx > 18 ? "right" : null, Math.abs(dx) / 110);
+  };
   card.addEventListener("pointerdown", (e) => {
     if (busy) return;
-    drag = { x: e.clientX, dx: 0, t: performance.now() };
-    card.setPointerCapture(e.pointerId);
+    // A new press always starts a new drag: one whose release was never seen must not leave the card unswipeable.
+    cancelAnimationFrame(frame);
+    frame = 0;
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0, axis: null, samples: [] };
+    pushSample(drag.samples, e.clientX, e.timeStamp);
+    try {
+      card.setPointerCapture(e.pointerId);
+    } catch {} // a synthetic or already-released pointer has nothing to capture
     card.classList.add("dragging");
   });
   card.addEventListener("pointermove", (e) => {
-    if (!drag) return;
+    if (!drag || e.pointerId !== drag.id) return;
+    // The samples include the moves the browser folded into this event, so a fast flick keeps its detail.
+    const seen = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    for (const p of seen.length ? seen : [e]) pushSample(drag.samples, p.clientX, p.timeStamp);
     drag.dx = e.clientX - drag.x;
-    card.style.transform = `translateX(${drag.dx}px) rotate(${drag.dx / 16}deg)`;
-    const side = drag.dx < -18 ? "left" : drag.dx > 18 ? "right" : null;
-    showPreview(side, Math.abs(drag.dx) / 110);
+    drag.axis = drag.axis || lockAxis(drag.dx, e.clientY - drag.y);
+    if (drag.axis === "x" && !frame) frame = requestAnimationFrame(paint);
   });
-  const end = () => {
-    if (!drag) return;
-    card.classList.remove("dragging");
-    const v = Math.abs(drag.dx) / Math.max(1, performance.now() - drag.t);
-    const side = drag.dx < 0 ? "left" : "right";
-    const go = Math.abs(drag.dx) > 95 || (Math.abs(drag.dx) > 40 && v > 0.6);
+  const end = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag;
     drag = null;
-    if (go) commit(side);
+    cancelAnimationFrame(frame);
+    frame = 0;
+    card.classList.remove("dragging");
+    // A drag the system took back (pointercancel) or one that went vertical chooses nothing.
+    const side = e.type === "pointerup" && d.axis === "x" ? decide(e.clientX - d.x, releaseVelocity(d.samples, e.clientX, e.timeStamp)) : null;
+    if (side) commit(side);
     else {
       card.style.transform = "";
       showPreview(null, 0);
@@ -890,6 +1259,7 @@ function bindSwipe() {
   };
   card.addEventListener("pointerup", end);
   card.addEventListener("pointercancel", end);
+  card.addEventListener("lostpointercapture", end); // after pointerup the drag is already over and this does nothing
   const tapChoice = (side) => {
     if (busy) return;
     // First tap previews (like a half-swipe); second tap commits.
@@ -933,10 +1303,17 @@ async function commit(side) {
   showPreview(null, 0);
   sfx.swipe();
   buzz(10);
+  const was = encOf(run) && encOf(run).id;
   const res = choose(run, side);
+  const now = encOf(run) && encOf(run).id;
+  const opened = bookUnlocks(run);
+  if (opened.length && !res.ending) saveMeta();
+  // A fight that ended is booked in the Adversaries sheet now, before its slip, like the run's own result.
+  if (res.enc && res.enc.resolved) bookMet(res.enc.id, res.enc.resolved);
   // A run that ends is recorded now, before its slip: closing the page on the slip can't take the result back
   // (or hand back a spent Vigil).
   if (res.ending) record();
+  else if (res.enc && res.enc.resolved) saveMeta(), saveRun();
   else saveRun();
   // The tutorial counts as done only once its last card has resolved, not when the run starts.
   if (!meta.tutorialDone && run.tutorial && !tutorialPending(run)) {
@@ -949,9 +1326,12 @@ async function commit(side) {
   if (res.roll) sfx.dice();
   if (res.notes.some((n) => n.startsWith("Communion"))) sfx.light();
   await slip(res);
-  if (res.ending) return finish();
+  if (res.enc && res.enc.resolved) await encounterEnd(res);
+  if (res.ending) return finish(opened);
+  if (opened.length) toast(`Unsealed for your next Exodus: ${opened.map(unlockName).join(", ")}.`);
   if (res.nightfall) await nightfall(res);
   if (run.lastEvent) await activation(run.lastEvent);
+  if (now && now !== was) await encounterIntro(run);
   renderHud();
   renderCard(true);
   busy = false;
@@ -984,7 +1364,7 @@ function chipsHtml(delta) {
     .join("");
 }
 const VERDICT = { radiance: "RADIANCE", hit: "CLEAN", mid: "AT A COST", miss: "THE WORLD MOVES", ruin: "RUIN" };
-const DLBL = { mark: "Mark", strain: "Strain", favor: "Favor", hollow: "Hollow", longing: "Longing", untag: "Untaggable", gnosis: "Gnosis", cage: "Cage" };
+const DLBL = { mark: "Mark", strain: "Strain", favor: "Favor", hollow: "Hollow", longing: "Longing", untag: "Untaggable", gnosis: "Gnosis", cage: "Cage", apo: "Pull" };
 
 function slip(res) {
   return new Promise((resolve) => {
@@ -1003,8 +1383,17 @@ function slip(res) {
     const nd = (night && night.delta) || {};
     // Over both key sets: a card's Strain +1 that the night takes back nets to nothing in res.delta.
     const own = Object.fromEntries([...new Set([...Object.keys(res.delta), ...Object.keys(nd)])].map((k) => [k, (res.delta[k] || 0) - (nd[k] || 0)]));
-    const notes = night && night.notes ? res.notes.slice(0, res.notes.length - night.notes.length) : res.notes;
-    const chips = chipsHtml(own);
+    let notes = night && night.notes ? res.notes.slice(0, res.notes.length - night.notes.length) : res.notes;
+    let chips = chipsHtml(own);
+    if (res.enc) {
+      // The adversary's clock and your roads, in the same chips; a fight's outcome gets its own screen after.
+      const def = ENCOUNTERS[res.enc.id];
+      const chip = (label, v, good) => `<span class="chip ${good ? "good" : "bad"}">${esc(label)} ${v > 0 ? "+" : "−"}${Math.abs(v)}</span>`;
+      if (res.enc.clock && !def.clock.key) chips += chip(def.clock.label, res.enc.clock, res.enc.clock < 0);
+      for (const [k, v] of Object.entries(res.enc.roads)) chips += chip(def.roads[k].label, v, v > 0);
+      const out = res.enc.resolved && def.outcomes[res.enc.resolved];
+      if (out && out.text) notes = notes.filter((n) => !n.startsWith(out.title + "."));
+    }
     if (chips) html += `<div class="deltas">${chips}</div>`;
     if (notes.length) html += `<div class="notes">${notes.map((n) => `<span>${esc(n)}</span>`).join("")}</div>`;
     html += `<div class="tap">Tap to go on</div>`;
@@ -1050,8 +1439,24 @@ function overlay(html, { dismiss = true, cls = "" } = {}) {
     backdrop();
     (el.querySelector("button:not([disabled])") || el).focus({ preventScroll: true });
     let armed = false;
+    // Tab and Shift+Tab wrap inside the dialog: the page behind is inert, so without this focus would fall out of the
+    // last button into the browser's own controls and the dialog would stop being keyboard-reachable.
+    const trap = (e) => {
+      const list = [...el.querySelectorAll('a[href],button,input,select,textarea,[tabindex]')].filter((n) => !n.disabled && n.tabIndex >= 0 && n.getClientRects().length);
+      const at = document.activeElement;
+      const edge = list.length ? list[e.shiftKey ? 0 : list.length - 1] : null;
+      if (!list.length || at === el || !el.contains(at)) {
+        // Focus on the dialog itself, or outside it: the first (Tab) or last (Shift+Tab) control, or the dialog if it has none.
+        e.preventDefault();
+        (list.length ? list[e.shiftKey ? list.length - 1 : 0] : el).focus({ preventScroll: true });
+      } else if (at === edge) {
+        e.preventDefault();
+        list[e.shiftKey ? list.length - 1 : 0].focus({ preventScroll: true });
+      }
+    };
     const key = (e) => {
       if (el.parentNode !== $("layer") || $("layer").lastElementChild !== el) return;
+      if (e.key === "Tab") return trap(e);
       // A held key's repeats never press a button here: only a fresh press does.
       if (e.repeat && (e.key === "Enter" || e.key === " ")) return e.preventDefault();
       if (!armed) return;
@@ -1119,7 +1524,7 @@ async function activation(ev) {
     // §9.5, 7–9: the player decides, and the decision costs something either way.
     const m = MASKS[run.stir];
     const v = await overlay(
-      `${head}<p class="fine">${esc(m.name)}: ${esc(m.bonus)} · ${esc(m.risk)}</p>
+      `${head}<p class="fine">${esc(m.name)}: ${esc(m.bonus)} · ${esc(m.gift)} · ${esc(m.risk)}</p>
       <div class="row"><button class="btn primary" data-v="let" type="button">Let ${esc(m.name)} answer · wear it</button>
       <button class="btn" data-v="hold" type="button"${run.favor < 1 ? " disabled" : ""}>Hold the wheel · −1 Favor</button></div>`,
       { dismiss: false },
@@ -1129,6 +1534,7 @@ async function activation(ev) {
     renderHud();
     return;
   }
+  if (ev.kind === "seizure") takeover(ev.mask);
   return overlay(`${head}<p class="fine">Under load, the question isn't what you do. It's who decides.</p><p class="tap">Tap to go on</p>`);
 }
 
@@ -1183,7 +1589,339 @@ function onMask(k) {
   refreshChoices();
   disarm();
   // One toast: what the change cost beyond its Strain (a Fracture absorbed, a Bond spent), then what it gives.
-  toast([...(r.notes || []), `${MASKS[k].name}: ${MASKS[k].bonus}`].join(" "));
+  toast([...(r.notes || []), `${MASKS[k].name}: ${MASKS[k].bonus}. ${MASKS[k].gift}.`].join(" "));
+}
+
+// ---------- Exodus: the fight in the tracks panel, the intent on the card, the relic strip ----------
+const encOf = (s) => (s && s.asc && s.asc.enc) || null;
+const ROMAN_ACT = { 1: "I", 2: "II", 3: "III" };
+// The Edicts in force on a run, said once where they bite most: at each adversary's door.
+const edictsLine = (s) => (s.asc && s.asc.edict ? `<p class="fine"><b>Edict ${roman(s.asc.edict)}.</b> ${EDICTS.slice(1, s.asc.edict + 1).map((e) => esc(e.text)).join(" ")}</p>` : "");
+// A new Exodus, once a Way Out has unsealed an Edict: how hard the Dominion answers this time. The highest is offered first.
+async function pickEdict() {
+  const max = meta.asc.edict;
+  if (!max) return 0;
+  const rows = EDICTS.slice(1, max + 1).map((e, i) => `<p><b>${roman(i + 1)} · ${esc(e.name)}.</b> ${esc(e.text)}</p>`).join("");
+  const btns = Array.from({ length: max + 1 }, (_, i) => max - i)
+    .map((n) => `<button class="btn small${n === max ? " primary" : " ghost"}" data-v="e:${n}" type="button">${n ? `Edict ${roman(n)}` : "No Edict"}</button>`)
+    .join("");
+  const v = String(await overlay(`<div class="eyebrow">The Dominion answers</div><p class="line">Somebody got out. They wrote new rules for the next one.</p><div class="rules">${rows}</div><p class="fine">Each Edict brings every one above it in this list. A Way Out walked under your highest unseals the next.</p><div class="row">${btns}</div>`, { dismiss: false }));
+  return /^e:\d+$/.test(v) ? +v.slice(2) : max;
+}
+// An intent's line, with the Shepherd's unseen Cage said as "it closes" until it's seen.
+// Keeping the Fast (occult.js), the Festival's relief that isn't answered brings only its clock: it says so.
+const saysOf = (s, it) => (it.relief && riteOn(s, "fast") ? it.relief : s.cageSeen ? it.says.replace(/it closes/g, "the Cage") : it.says);
+// During a fight the adversary takes the tracks panel: its clock, your three roads, Longing and Bonds as ever, and
+// a line for Untaggable, Gnosis, the Named and the Pull. The same four rows, so the screen never grows. The intent
+// sits at the head of the card, with the next one dim beneath it.
+function renderEnc(s) {
+  const e = encOf(s);
+  const fight = !!e;
+  for (const id of ["t-untag", "t-gnosis"]) $(id).hidden = fight;
+  if (fight) $("t-cage").hidden = true;
+  for (const id of ["t-clock", "t-roads", "t-sum"]) $(id).hidden = !fight;
+  const live = encOf(run);
+  const c = run && !run.over ? currentCard(run) : null;
+  const it = live && c && c.enc === live.id && live.intent && INTENTS[live.intent];
+  $("intent").hidden = !it;
+  if (it) {
+    const nx = live.next && INTENTS[live.next];
+    $("intent").innerHTML = `<b>▲ ${esc(it.name)}</b><span>Unless stopped: ${esc(saysOf(run, it))}</span>${nx ? `<i>Next intended: ${esc(nx.name)}</i>` : ""}`;
+  }
+  if (!fight) return;
+  const def = ENCOUNTERS[e.id];
+  const v = def.clock.key ? s[def.clock.key] : e.clock;
+  const unseen = !!(def.clock.hidden && !s.cageSeen);
+  const clock = $("t-clock");
+  clock.classList.toggle("unseen", unseen);
+  clock.querySelector(".tl").textContent = unseen ? "SOMETHING CLOSES" : def.clock.label.toUpperCase();
+  const sg = clock.querySelector(".segs");
+  sg.style.setProperty("--n", def.clock.max);
+  sg.innerHTML = Array.from({ length: def.clock.max }, (_, i) => `<i${!unseen && i < v ? ' class="on"' : ""}></i>`).join("");
+  clock.querySelector(".n").textContent = unseen ? "?" : `${v}/${def.clock.max}`;
+  clock.querySelector(".tl").setAttribute("aria-label", unseen ? "Something closes: you can't see how far" : `${def.clock.label} ${v} of ${def.clock.max}`);
+  const lead = encBestRoad(s);
+  const roads = Object.entries(def.roads);
+  $("t-roads").querySelector(".roads").innerHTML = roads.length
+    ? roads.map(([k, r]) => `<span class="road${k === lead ? " lead" : ""}" id="enc-road-${k}" role="img" aria-label="${esc(r.label)}: ${e.roads[k]} of ${e.need[k]}"><b>${esc(r.tag.toUpperCase())}</b><span class="pips">${Array.from({ length: e.need[k] }, (_, i) => `<i${i < e.roads[k] ? ' class="on"' : ""}></i>`).join("")}</span></span>`).join("")
+    : `<span class="road"><b>RUNG ${Math.min(4, e.turn + 1)}/4</b></span>`;
+  const pull = s.asc.apoSeen ? ` · PULL ${s.apo}/6` : "";
+  $("t-sum").querySelector(".sum").textContent = `UNTAGGABLE ${s.untag} · GNOSIS ${s.gnosis} · NAMED FREED ${s.asc.freed}${pull}`;
+}
+
+// The second line on a choice in a fight: whether it stops the intent, which of your roads it moves, a seal's price.
+// Never which way. A choice that can end the run, win it or seat you says that instead.
+function choiceTag(p, ch = null) {
+  if (p.lethal && p.lethal.p >= 0.999) return `${SKULL} ends your run`;
+  // A choice that can win says so, with its odds: the bare escape at the gate and the chair is a roll, not a retreat.
+  if (p.crown) return `${CROWN} ${p.crown.p >= 0.999 ? "" : pct(p.crown.p) + " · "}${esc(winName(p.crown))}`;
+  if (p.kept) return `☀ ${p.kept.p >= 0.999 ? "kept" : pct(p.kept.p)} · ${esc(ENDINGS[p.kept.endings[0]].title)}`;
+  const e = encOf(run);
+  // Outside a fight, a choice can carry its own second line (the occult expansion's rules: occult.js tag).
+  if (!p.enc || !e) return ch && ch.tag ? esc(ch.tag) : "";
+  const def = ENCOUNTERS[e.id];
+  const it = e.intent && INTENTS[e.intent];
+  const bits = [];
+  if (p.enc.sealed) bits.push("🔒 +2 strain");
+  if (p.enc.verb === "flee") bits.push("disengage");
+  else if (it) bits.push(p.enc.answers ? "✓ stops it" : p.enc.refuses ? "✗ refuses it" : "intent lands");
+  for (const k of p.enc.roads) bits.push(def.roads[k].tag);
+  if (p.enc.resolves) bits.push(p.enc.resolves.p >= 0.999 ? "ends the fight" : `${pct(p.enc.resolves.p)} ends it`);
+  return bits.map(esc).join(" · ");
+}
+
+// Relics: two slots. Tap one for its sheet: what it does on this card (both sides' odds with it worked), Work it,
+// Transmute, Not now. Hold it to read where it came from.
+function renderRelics(s) {
+  const on = s.mode === "ascension";
+  $("relics").hidden = !on;
+  if (!on) return;
+  const a = s.asc;
+  // The Refusal rite (occult.js): the Refuse control sits in the tray, a third slot, laid on a card as a working is.
+  const refusing = riteOn(s, "refusal") && !s.over;
+  $("relics").classList.toggle("three", refusing);
+  $("relics").innerHTML = [0, 1]
+    .map((i) => {
+      const k = a.relics[i];
+      if (!k) return `<button class="relic empty" type="button" disabled aria-label="An empty relic slot"><span><span class="rn">Empty slot</span><span class="rc">a chapel, a floorboard</span></span></button>`;
+      const r = RELICS[k];
+      const n = a.charges[k] || 0;
+      const armed = a.armed === k || (a.armed === "clearglass" && k === "glass");
+      const stone = isStone(s, k);
+      const held = inVessel(s, k);
+      const name = stone ? STONES[k].name : r.name;
+      const works = stone ? STONES[k].works : r.works;
+      const price = stone ? "no price" : priceWords(s, k);
+      const rc = held ? "in the vessel" : armed ? "laid on this card" : `${"•".repeat(n) || "used"} · ${price}`;
+      return `<button class="relic${n && !held ? "" : " spent"}${armed ? " armed" : ""}${stone ? " stone" : ""}${held ? " vessel" : ""}" id="r-${k}" type="button" aria-label="${esc(name)}: ${esc(works)}, for ${esc(price)}. ${held ? "In the vessel." : `${n} use${n === 1 ? "" : "s"} left${armed ? ", laid on this card" : ""}.`}">${svg(stone ? "stone" : held ? "alembic" : r.art, 5)}<span><span class="rn">${esc(name.replace(/^The /, ""))}</span><span class="rc">${esc(rc)}</span></span></button>`;
+    })
+    .join("") + (refusing ? refuseButton(s) : "");
+  if (refusing) $("r-refuse").onclick = () => {
+    if (busy || !run || run.over || run.stir) return;
+    const on = !!(run.asc.occ && run.asc.occ.refuse);
+    const r = refuse(run, !on);
+    if (!r.ok) return toast(r.why || "Not on this card.");
+    buzz(8);
+    saveRun();
+    renderHud(); // the previews are played out again with the refusal laid on (or lifted)
+    refreshChoices();
+    disarm();
+    toast(r.on ? (r.kind === "gate" ? `Refusal laid on this card: whichever way you go, you storm ${sphereName(occDay(run))}'s gate. Strain +1, Mark +1.` : "Refusal laid on this card: the side that doesn't answer refuses the intent. Mark +1.") : "Refusal lifted.");
+  };
+  for (const k of a.relics) {
+    const b = $("r-" + k);
+    let press = 0;
+    let held = false;
+    const cancel = () => clearTimeout(press);
+    b.addEventListener("pointerdown", () => {
+      cancel();
+      held = false;
+      press = setTimeout(() => ((held = true), buzz(8), toast(RELICS[k].found)), 550);
+    });
+    ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => b.addEventListener(ev, cancel));
+    b.addEventListener("contextmenu", (e) => (e.preventDefault(), (held = true), toast(RELICS[k].found)));
+    b.onclick = () => (held ? (held = false) : relicSheet(k));
+  }
+}
+// A working's price as this card has it (engine.js relicPrice): in its sphere's hour, waived at home, doubled in exile.
+function priceWords(s, k) {
+  const m = hourOf(s, k);
+  if (m === 1) return RELICS[k].price;
+  if (m === 0) return "no price: its hour";
+  const p = relicPrice(s, k);
+  return Object.entries(p).map(([t, v]) => (t === "gilt" ? `gilt +${v}` : `${TRACK_WORD[t] || t} ${v < 0 ? "−" : "+"}${Math.abs(v)}`)).join(", ") + ": in exile";
+}
+// The Refuse control (occult.js RITES refusal): laid on, offered, or why not, in the tray's third slot.
+function refuseButton(s) {
+  const o = s.asc.occ;
+  const can = canRefuse(s);
+  const on = !!o.refuse;
+  const rc = on ? "laid on this card" : can.ok ? (can.kind === "gate" ? "storm the gate" : "refuse the intent") : "not on this card";
+  return `<button class="relic refuse${on ? " armed" : ""}${can.ok || on ? "" : " spent"}" id="r-refuse" type="button" aria-pressed="${on}" aria-label="Refuse: ${on ? "laid on this card. Tap to lift it." : can.ok ? (can.kind === "gate" ? "storm today's gate, Strain +1 and Mark +1." : "the side that doesn't answer refuses the intent, Mark +1.") : esc(can.why || "nothing to refuse on this card.")}">${svg("serpent", 5)}<span><span class="rn">Refuse</span><span class="rc">${esc(rc)}</span></span></button>`;
+}
+// One side's odds and flags as they'd be with the working laid on (played out on a copy).
+function sideWith(s, side) {
+  const p = preview(s, side);
+  const bits = [];
+  if (p.lethal) bits.push(`${SKULL} ${pct(p.lethal.p)}`);
+  if (p.crown) bits.push(`${CROWN} ${pct(p.crown.p)}`);
+  if (p.enc && p.enc.answers) bits.push("✓ stops it");
+  if (p.roll) bits.push(`${pct(p.roll.hit)} clean · ${pct(p.roll.miss)} worse`);
+  return bits.join(" · ") || "no change you can see";
+}
+// The sky and the reading, as they stand: today's planet and what it does, the sign, and each card's place.
+// Every line is a rule the engine applies (arcana.js), and the sheet says plainly that the sky is a convention.
+function skySheet(s) {
+  if (busy || !s.arc) return;
+  const t = skyToday(s);
+  const p = PLANETS[t.p];
+  const sign = SIGNS[s.arc.sign];
+  const does = [t.boon && `boon: ${p.boon}`, t.cost && `toll: ${p.cost}`].filter(Boolean).join("; ");
+  const places = s.asc ? PLACES : [{ name: "Tonight's Card" }];
+  const rows = s.arc.spread
+    .map((c, i) => {
+      const where = places[i] ? places[i].name + (places[i].over ? ` · over ${places[i].over}` : "") : "";
+      const what = c.st === "down" ? "face down" : c.st === "struck" ? `${ARCANA[c.id].name}, struck: it has no say` : `<b>${esc(cardTitle(c))}</b> (ruled by ${esc(rulerName(c.id))}). ${esc(cardLine(c))}`;
+      return `<p class="fine">${esc(where)}: ${what}</p>`;
+    })
+    .join("");
+  overlay(
+    `<div class="eyebrow">The sky · ${esc(sign.name)} ${sign.glyph}\uFE0E · ${sign.el}</div>
+    <p class="line">${esc(p.day)}: ${esc(p.name.charAt(0).toUpperCase() + p.name.slice(1))} ${p.glyph}\uFE0E, ${DIGNITY_WORD[t.d]} in ${esc(sign.name)}. ${esc(does.charAt(0).toUpperCase() + does.slice(1))}.</p>
+    <p class="fine">${esc(p.line)}</p>${rows}${spheresHtml(s)}
+    <p class="fine">Seven planets rule the seven days in the old order. A planet at home or exalted in the sign gives its boon only; in exile, its toll only; elsewhere, both. A card the sky favors through its ruler comes up upright; one it afflicts, reversed. This sky is the game's convention, not where the planets are tonight. ${ARCANA_PLANNED.length ? `${78 - ARCANA_PLANNED.length} of the 78 cards are in this deck so far.` : "All 78 cards are in this deck."}</p>
+    <button class="btn ghost" data-v="ok" type="button">Close</button>`,
+    { dismiss: false },
+  );
+}
+// The Seven Spheres (occult.js), text first: each sphere, what it holds, and its gate as it stands. Today's sphere is
+// marked. A track the run hasn't shown (the Cage, the Pull) isn't named.
+function spheresHtml(s) {
+  const o = occOf(s);
+  if (!o) return "";
+  const today = occDay(s);
+  const rows = LADDER.map((p) => {
+    const x = SPHERES[p];
+    const g = o.spheres[p];
+    const holds = shownTrack(s, p) ? `${TRACK_WORD[x.holds]} at ${x.line} or less, fallen that day` : "something here holds you";
+    const state = g ? `passed: ${MEANS[g]}` : `holds (${holds})`;
+    return `<p class="fine sphere${p === today ? " today" : ""}${g ? " passed" : ""}">${x.glyph}\uFE0E <b>${esc(sphereName(p, true))}</b>${p === today ? " · tonight" : ""}: ${esc(x.garment)}. ${esc(state)}.</p>`;
+  }).join("");
+  const path = pathOf(s);
+  const rites = o.rites.length ? o.rites.map((k) => RITES[k].name).join(", ") : "none held";
+  const acc = o.account ? ACCOUNTS[o.account].name : "not yet heard";
+  const states = Object.fromEntries(LADDER.filter((p) => o.spheres[p]).map((p) => [p, o.spheres[p]]));
+  const glyphs = Object.fromEntries(LADDER.map((p) => [p, SPHERES[p].glyph]));
+  return `<div class="eyebrow">The Seven Spheres · ${esc(PATHS[path])}</div>${ladderArt(LADDER, states, today, glyphs)}
+    <p class="fine">Rites: ${esc(rites)}. The Architect: ${esc(acc)}.${o.will ? ` Your will: ${esc(ORBIT[o.will])}.` : o.claimed ? " Another's will, named as yours." : ""}${o.debts.length ? ` Owed to the Seven: ${esc(o.debts.map((d) => sphereName(d.p)).join(", "))}, at the next fight.` : ""} At nightfall the day's sphere lets you past if you've given its garment back (its track fell that day, to its line), or by another way you've found. A passed gate's toll is quiet for the run.</p>${rows}`;
+}
+async function relicSheet(k) {
+  if (busy || !run || run.over || run.stir) return;
+  const stone = isStone(run, k);
+  const r = stone ? { ...RELICS[k], name: STONES[k].name, works: STONES[k].works, price: "no price, once", transmute: STONES[k].transmute } : { ...RELICS[k], price: priceWords(run, k) };
+  const n = run.asc.charges[k] || 0;
+  const can = canWork(run, k);
+  // The occult expansion's two other actions: Correspond on a reading its sphere rules; the vessel at the first chapel.
+  const cor = canCorrespond(run, k);
+  const ves = canVessel(run, k);
+  let lines = "";
+  if (can.ok) {
+    const t = JSON.parse(JSON.stringify(run));
+    work(t, k);
+    if (!t.over) lines = `<p class="fine">With it, this card: ◀ ${sideWith(t, "left")}<br>▶ ${sideWith(t, "right")}</p>`;
+  }
+  const tc = transmute(JSON.parse(JSON.stringify(run)), k);
+  const v = await overlay(
+    `<div class="eyebrow">${esc(r.name)} · ${n} use${n === 1 ? "" : "s"} left</div>
+    <p class="line">${esc(r.works.charAt(0).toUpperCase() + r.works.slice(1))}, for ${esc(r.price)}.</p>${lines}
+    ${can.ok ? "" : `<p class="fine">${esc(can.why)}</p>`}
+    <p class="fine">Transmute it toward freedom: ${esc(r.transmute)}, and Gnosis +1. It's gone for good.${tc.ending ? ` ${SKULL} That would end your run.` : ""}</p>
+    ${cor.ok ? `<p class="fine"><b>As above, so below.</b> This card's ruler is ${esc(SPHERES[Object.keys(SPHERES).find((p) => SPHERES[p].relic === k)].name)}, its metal: Correspond, for one use, and it comes up upright, with no Pull.</p>` : ""}
+    ${ves.ok ? `<p class="fine"><b>The Great Work.</b> Put it in the vessel: through the second movement it can't be worked or taken from you; at the next chapel it comes out as ${esc(STONES[k].name)} (${esc(STONES[k].works)}, once). One relic a run.</p>` : ""}
+    <div class="row"><button class="btn primary" data-v="work" type="button"${can.ok ? "" : " disabled"}>Work it</button><button class="btn" data-v="transmute" type="button"${canTransmute(run, k).ok ? "" : " disabled"}>Transmute</button>${cor.ok ? '<button class="btn" data-v="correspond" type="button">Correspond</button>' : ""}${ves.ok ? '<button class="btn" data-v="vessel" type="button">Into the vessel</button>' : ""}<button class="btn ghost" data-v="ok" type="button">Not now</button></div>`,
+    { dismiss: false },
+  );
+  if (!["work", "transmute", "correspond", "vessel"].includes(v)) return;
+  const card = run.cardId;
+  const res = v === "work" ? work(run, k) : v === "transmute" ? transmute(run, k) : v === "correspond" ? correspond(run, k) : vessel(run, k);
+  if (!res.ok) return;
+  disarmMask(); // its cost and ☠ were read before the working
+  buzz(8);
+  saveRun();
+  renderHud();
+  if (res.ending) return finish();
+  if (run.cardId !== card || v === "correspond") renderCard(v !== "correspond");
+  else refreshChoices(), disarm();
+  toast(res.notes.join(" "));
+}
+
+// A fight begins: who, what it wants, how it ends either way, and what it came prepared for.
+async function encounterIntro(s) {
+  const e = encOf(s);
+  const def = ENCOUNTERS[e.id];
+  const roads = Object.values(def.roads).map((r) => r.label);
+  const k = e.counter && def.counter[e.counter];
+  const first = !meta.hints.encounter;
+  if (first) {
+    meta.hints.encounter = 1;
+    saveMeta();
+  }
+  const v = def.clock.key ? s[def.clock.key] : e.clock;
+  const unseen = def.clock.hidden && !s.cageSeen;
+  const clock = def.clock.key === "apo" ? `The Pull ${v}/6: at 6 you're A Small Rex Mundi.` : unseen ? "Its clock is hidden: something closes, and you can't see how far." : `${def.clock.label} ${v}/${def.clock.max}${def.clock.end || def.clock.ends ? ": if it fills, it's over" : def.clock.full ? ": if it fills, the Audit" : ""}.`;
+  await overlay(`<div class="eyebrow">${esc(ACTS[s.asc.act].name)} · ${esc(ACTS[s.asc.act].arc)}</div><h2 class="big">${esc(def.name)}</h2>
+    <p class="line">${esc(def.intro)}</p>
+    <p class="fine">${esc(clock)}${roads.length ? ` Your roads out: ${esc(roads.join(", "))}. Fill one and you can stop there.` : ""}</p>
+    ${k ? `<p class="fine"><b>${e.counter === "mixed" ? "It couldn't read you." : "It came prepared."}</b> ${esc(k.text)}</p>` : ""}
+    ${edictsLine(s)}
+    ${first ? `<p class="fine">The head of each card says what it does to you this card, and what it means to do next. A choice marked ✓ stops it; the other lets it land, and builds harder if it rolls well. Fights hold the Bell: no night falls until it's over. Two from a full clock, the side that doesn't stop it becomes a way out, and you're gone before the blow lands. The last card is yours: stand on the road you built, or disengage.</p>` : ""}
+    <p class="tap">Tap to begin</p>`);
+}
+// Still sealed for this player: roads and relics a new Exodus won't offer yet.
+const sealed = () => Object.keys(UNLOCKS).filter((k) => !meta.asc.unlocked.includes(k));
+const unlockName = (k) => (UNLOCKS[k].kind === "road" ? ROADS[k] : RELICS[k]).name;
+// What this run has just opened for the runs after it. Booked as it happens; it never changes the run under way.
+function bookUnlocks(s) {
+  if (!s.asc) return [];
+  const opened = sealed().filter((k) => UNLOCKS[k].opens(s));
+  meta.asc.unlocked.push(...opened);
+  return opened;
+}
+// A meeting, by how it ended: the fight's own outcome, or the run's ending when the run ended inside it.
+function bookMet(id, k) {
+  const m = (meta.asc.met[id] = meta.asc.met[id] || {});
+  m[k] = (m[k] || 0) + 1;
+}
+async function encounterEnd(res) {
+  const id = res.enc.id;
+  const def = ENCOUNTERS[id];
+  const out = def.outcomes[res.enc.resolved];
+  if (!out || !out.text) return;
+  if (def.roads[res.enc.resolved] || res.enc.resolved === "unfiled") sfx.light();
+  await overlay(`<div class="eyebrow">${esc(def.name)}</div><h2 class="big">${esc(out.title)}</h2><p class="line">${esc(out.text)}</p><p class="tap">Tap to go on</p>`);
+}
+
+function relicGuide() {
+  const held = run && run.asc ? run.asc.relics : [];
+  const shut = run && run.asc ? run.asc.locked : sealed();
+  const rows = Object.entries(RELICS)
+    .map(([k, r]) => shut.includes(k) && !held.includes(k) ? `<div class="mrow locked">${svg(r.art, 5)}<p><b>A relic, sealed</b> · ${esc(UNLOCKS[k].hint)}</p></div>` : `<div class="mrow${held.includes(k) ? " on" : ""}">${svg(r.art, 5)}<p><b>${esc(r.name)}</b> · ${esc(r.works)}. <span class="risk">Price: ${esc(r.price)}.</span> ${r.uses} use${r.uses === 1 ? "" : "s"}, readied at a chapel. Transmuted: ${esc(r.transmute)}, Gnosis +1.<br>${esc(r.found)}</p></div>`)
+    .join("");
+  return overlay(`<div class="eyebrow">Relics · Exodus</div><div class="rules"><p>Confiscated things, taken back. ${run && run.asc && run.asc.edict >= 3 ? "Under Confiscation you carry one; a second means leaving it." : "You carry two; a third means leaving one."} Working a relic spends a use, and only a chapel's Prepare readies them again. Transmuting one destroys it for good, toward freedom: its own effect, and Gnosis +1. Tap a relic in play for what it would do to the card in front of you.</p>${rows}</div><div class="row"><button class="btn ghost" data-v="ok" type="button">Close</button></div>`, { dismiss: false });
+}
+
+// The Seven Spheres (occult.js), as the codex has learned them: each garment, and how often its gate was passed.
+function sevenCodex() {
+  const g = meta.asc.occ.gates;
+  const rows = LADDER.map((p) => {
+    const x = SPHERES[p];
+    const by = g[p] ? Object.entries(g[p]).map(([how, n]) => `${MEANS[how] || how} ×${n}`).join(" · ") : "";
+    return `<div${by ? "" : ' class="locked"'}><h4>${x.glyph}\uFE0E ${esc(sphereName(p, true))} · ${esc(x.metal)}</h4><p>Its garment: ${esc(x.garment)}. ${by ? esc(by) : "Its gate hasn't let you past yet."}</p></div>`;
+  }).join("");
+  const paths = Object.entries(meta.asc.occ.paths).map(([k, n]) => `${PATHS[k] || k} ×${n}`).join(" · ");
+  return `<div class="eyebrow">The Seven</div>${rows}${paths ? `<div><h4>The ways walked</h4><p>${esc(paths)}</p></div>` : ""}`;
+}
+// What you've learned about the adversaries, in canon's own terms (§13): detection, danger, counter, impact.
+// Knowledge, never power. Unmet ones show only where they wait.
+function codex() {
+  const rows = Object.entries(ENCOUNTERS)
+    .map(([id, def]) => {
+      const met = meta.asc.met[id];
+      if (!met) return `<div class="locked"><h4>? ? ?</h4><p>${esc(def.hint)}</p></div>`;
+      const seen = def.phases.flatMap((p) => p.intents || []).filter((k, i, a) => a.indexOf(k) === i && meta.asc.seen[k]);
+      const outs = Object.entries(met).map(([k, n]) => `${esc(def.outcomes[k] ? def.outcomes[k].title : ENDINGS[k] ? ENDINGS[k].title : k)} ×${n}`).join(" · ");
+      const counter = Object.keys(def.roads).length ? `${Object.values(def.roads).map((r) => r.label).join(", ")}; or disengage at the last card` : "Refuse what pulls. Leave the chair empty.";
+      return `<div><h4>${esc(def.name)}</h4><p>${esc(def.intro)}</p>
+        <p><b>Detection.</b> ${seen.length ? seen.map((k) => `${esc(INTENTS[k].name)}: ${esc(INTENTS[k].says)}, stopped by ${esc(INTENTS[k].by.map((v) => VERBS[v]).join(" or "))}`).join("; ") : "Nothing seen yet."}</p>
+        <p><b>Danger.</b> ${esc(def.danger)}</p>
+        <p><b>Counter.</b> ${esc(counter)}</p>
+        <p class="risk"><b>Impact.</b> ${outs}</p></div>`;
+    })
+    .join("");
+  const shut = sealed().map((k) => `<div class="locked"><h4>${UNLOCKS[k].kind === "road" ? "A road" : "A relic"}, sealed</h4><p>${esc(UNLOCKS[k].hint)}</p></div>`).join("");
+  const line = meta.asc.lineage.length ? `<div class="eyebrow">Your line</div>${meta.asc.lineage.slice().reverse().map((x) => `<div${x.won ? "" : ' class="locked"'}><h4>${esc(x.n)} · ${esc(x.by)}</h4><p>${esc(ACTS[x.act] ? ACTS[x.act].name : "")}${x.edict ? ` · Edict ${roman(x.edict)}` : ""}${x.won ? " · got out" : ""}</p></div>`).join("")}` : "";
+  const eds = EDICTS.slice(1).map((e, i) => (i < meta.asc.edict ? `<div><h4>Edict ${roman(i + 1)} · ${esc(e.name)}</h4><p>${esc(e.text)}</p></div>` : i === meta.asc.edict ? `<div class="locked"><h4>Edict ${roman(i + 1)}, sealed</h4><p>Walk a Way Out under ${i ? `Edict ${roman(i)}` : "no Edict"}.</p></div>` : "")).join("");
+  return overlay(`<div class="eyebrow">Adversaries · Exodus</div><div class="gallery">${rows}${shut ? `<div class="eyebrow">Still sealed</div>${shut}` : ""}${sevenCodex()}<div class="eyebrow">Edicts</div>${eds}${line}</div><button class="btn ghost" data-v="ok" type="button">Close</button>`, { dismiss: false });
 }
 
 // ---------- endings ----------
@@ -1200,20 +1938,46 @@ function record() {
   meta.plays++;
   meta.best = Math.max(meta.best, n);
   if (e.win) meta.crowns++;
-  info.stillOut = nextStillOut(e.win);
-  const text = shareText(s, shareUrl());
-  if (s.mode === "vigil") meta.vigils[s.seedLabel] = { over: s.over, nights: n, text };
-  if (saveMeta()) store.del("fl.run");
-  else store.set("fl.run", s); // keep the completed attempt recoverable
+  info.stillOut = nextStillOut(e.win, s.mode === "ascension");
+  const text = shareText(s, shareUrl(), shareOpts(s));
+  if (s.mode === "vigil") meta.vigils[s.seedLabel] = { over: s.over, nights: n, text, ...(s.late ? { late: true } : {}) };
+  if (s.mode === "ascension") {
+    meta.asc.runs++;
+    // A Way Out walked under the highest Edict unseals the next. The early wins and By Decree don't.
+    // (A friend's road at a higher Edict than yours unseals nothing: Edicts are walked one at a time.)
+    if (e.win && e.family === "unmaking" && s.asc.edict === meta.asc.edict && meta.asc.edict < MAX_EDICT) info.edict = meta.asc.edict = s.asc.edict + 1;
+    meta.asc.act = Math.max(meta.asc.act, s.asc.act);
+    // Ended inside a fight, or at the Oldest Trap's gate or chair: that meeting is booked by the run's ending. (A fight
+    // that had only just begun, on the card that ended the run, wasn't met.)
+    if (s.asc.enc && s.asc.enc.turn > 0) bookMet(s.asc.enc.id, s.over);
+    if (s.asc.occ) {
+      const o = s.asc.occ;
+      for (const [p, how] of Object.entries(o.spheres)) {
+        const g = (meta.asc.occ.gates[p] = meta.asc.occ.gates[p] || {});
+        g[how] = (g[how] || 0) + 1;
+      }
+      const path = pathOf(s);
+      meta.asc.occ.paths[path] = (meta.asc.occ.paths[path] || 0) + 1;
+    }
+    if (s.asc.self) {
+      meta.asc.lineage.push({ n: s.asc.self, by: e.title, end: s.over, act: s.asc.act, edict: s.asc.edict, won: !!e.win });
+      meta.asc.lineage = meta.asc.lineage.slice(-12);
+    }
+  }
+  if (saveMeta()) store.del(slotOf(s));
+  else store.set(slotOf(s), s); // keep the completed attempt recoverable
+  if (s === ascRun) ascRun = null;
   return (recorded = { s, text, info });
 }
-function finish() {
+function finish(opened = []) {
   busy = true;
   hideCoach();
   document.querySelectorAll(".toast").forEach((t) => t.remove());
   const { s, text, info } = record();
+  info.opened = opened;
   const e = ENDINGS[s.over];
-  setMood(e.win ? "light" : "end");
+  // Exodus's own endings have their own music: a Way Out opens The World Without a King, the chair gets the Architect.
+  setMood(e.family === "unmaking" && e.win ? "unmade" : e.kept ? "decreed" : e.win ? "light" : "end");
   e.win ? sfx.light() : sfx.end();
   buzz(e.win ? [20, 30, 20, 30, 60] : info.firstFind ? [40, 60, 90] : [80]);
   showEnd(s, text, info);
@@ -1239,6 +2003,10 @@ function causeSentence(s) {
     billet: by ? `${by} followed you home.` : "They followed you home.",
     flag: "You picked up the old flag.",
     corner: "The raid on the old corner took you with it.",
+    catalogued: "The Inquisition finished its catalogue.",
+    fluent: "The Grammar finished its sentence, in your handwriting.",
+    gilded: "The Festival reached noon with you still in it.",
+    decree: s.endBy === "a_force" ? "You stopped the festival by force, and they seated you for it." : "You sat down.",
   }[k];
   return line ? line + "<br />" : "";
 }
@@ -1256,6 +2024,12 @@ const END_LESSON = {
   billet: "Slipping home with a tail is a gamble. Lamps and crowds are the safe way out.",
   flag: "The old yard asks three times. Saying no out loud, at any of them, ends it.",
   corner: "Going back for the old work puts your face on the corner when the wagons come.",
+  shadow: "The Enemy asks three times. Naming another goal, burning the notes or setting him down, at any of them, ends it.",
+  catalogued: (s) => `Every night at Mark 3 or more fattens the File before the fight. In it, a choice marked ✓ stops the intent at the head of the card. Fill one road first, or disengage when the File is two from full. Walking out bare is only certain at Untaggable ${bareAt(s)}.`,
+  fluent: "The Grammar starts higher for every Chain you gave in to on the road, and speaks those Chains twice as often. Answer what you can and build one road.",
+  gilded: "The Festival starts higher for your tolerance of the Light and the gilt you owe, and two higher if you walked out of the Grammar. Keep the Light rare before the third movement.",
+  decree_force: "Force stops the festival for good only with someone beside you and the Pull at 2 or less. Alone, or pulled, a hit seats you.",
+  decree: (s) => `The chair is always the sure thing. The Return asks Gnosis 9, the Pull at ${pullAt(s, 1)} or less and someone beside you; the Open Gate, two of the Named freed and the Pull at ${pullAt(s, 3)} or less. Or hold the gate, or walk.`,
 };
 const segs = (v, n) => `<div class="segs" style="--n:${n}">${Array.from({ length: n }, (_, i) => `<i${i < v ? ' class="on"' : ""}></i>`).join("")}</div>`;
 
@@ -1264,11 +2038,13 @@ const segs = (v, n) => `<div class="segs" style="--n:${n}">${Array.from({ length
 // Picked once per ending: the next unfound one after the last named, in a fixed order, so the pool shrinking
 // under it can't land on the same one twice running. The order mixes the kinds of ending and puts the plain meter
 // deaths, which find a player anyway, last: a first session's questions aren't six Namings in a row.
-const STILL_OUT = ["cage", "named_hunt", "fracture_reckoning", "billet", "named_zealot", "rex", "corner", "named_scout", "flag", "named_darvo", "named_clerk", "collapse", "destitute", "fracture", "named"];
-function nextStillOut(won) {
-  const other = won && Object.keys(ENDINGS).find((k) => ENDINGS[k].win && !meta.endings[k]);
+const STILL_OUT = ["cage", "named_hunt", "fracture_reckoning", "billet", "named_zealot", "rex", "corner", "named_scout", "shadow", "flag", "named_darvo", "named_clerk", "collapse", "destitute", "fracture", "named"];
+function nextStillOut(won, asc = false) {
+  // Exodus's endings are only suggested from inside Exodus, where they can be found.
+  const ok = (k) => ENDINGS[k] && (asc || ENDINGS[k].family !== "unmaking");
+  const other = won && Object.keys(ENDINGS).find((k) => ok(k) && ENDINGS[k].win && !meta.endings[k]);
   if (other) return other;
-  const keys = [...STILL_OUT, ...Object.keys(ENDINGS).filter((k) => !STILL_OUT.includes(k))].filter((k) => ENDINGS[k] && !ENDINGS[k].win && ENDINGS[k].hint);
+  const keys = [...STILL_OUT, ...Object.keys(ENDINGS).filter((k) => !STILL_OUT.includes(k))].filter((k) => ok(k) && !ENDINGS[k].win && ENDINGS[k].hint);
   const at = keys.indexOf(meta.lastOut);
   const k = [...keys.slice(at + 1), ...keys.slice(0, at + 1)].find((x) => !meta.endings[x]);
   if (k) meta.lastOut = k;
@@ -1276,50 +2052,88 @@ function nextStillOut(won) {
 }
 const stillOut = (k) => (k ? `<p class="stillout">Still out there: <i>${esc(ENDINGS[k].hint)}</i></p>` : "");
 function lesson(s) {
-  const k = s.over.startsWith("named") ? (s.endBy === "reckoning" ? "named_reckoning" : "named") : s.over;
-  return END_LESSON[k] && (meta.endings[s.over] || 0) <= 3 ? `<p class="lesson">${END_LESSON[k]}</p>` : "";
+  const k = s.over.startsWith("named") ? (s.endBy === "reckoning" ? "named_reckoning" : "named") : s.over === "decree" && s.endBy === "a_force" ? "decree_force" : s.over;
+  const l = typeof END_LESSON[k] === "function" ? END_LESSON[k](s) : END_LESSON[k];
+  return l && (meta.endings[s.over] || 0) <= 3 ? `<p class="lesson">${l}</p>` : "";
+}
+// Exodus's road, on its end screen: each adversary and how it ended, the Named you got out, what you carried.
+function ascSummary(s) {
+  const a = s.asc;
+  const rows = a.met.map((m) => {
+    const def = ENCOUNTERS[m.id];
+    const out = def.outcomes[m.out];
+    return `<div><span>${esc(def.name)}: <b>${esc(out && out.title ? out.title : m.out === "fled" ? "fled" : m.out)}</b></span></div>`;
+  });
+  if (a.enc) rows.push(`<div><span>${esc(ENCOUNTERS[a.enc.id].name)}: <b>unfinished</b></span></div>`);
+  const freed = (a.named || []).filter((x) => x.st === "free").map((x) => x.n);
+  const heir = (a.named || []).find((x) => x.heir);
+  if (heir) rows.push(`<div><span>${esc(heir.n)}, who walked it before you: <b>${heir.st === "free" ? "you got them out" : "still in the margin"}</b></span></div>`);
+  return `<div class="crownprog"><div class="eyebrow">${a.self ? `${esc(a.self)}'s road` : "The road"} · ${esc(ACTS[a.act].name)}${a.road ? ` · ${esc(ROADS[a.road].name)}` : ""}</div>${rows.join("")}
+    <div><span>The Named freed: <b>${a.freed}</b>${freed.length ? ` (${esc(freed.join(", "))})` : ""}${a.relics.length ? ` · carried: ${esc(a.relics.map((r) => RELICS[r].name).join(", "))}` : ""}</span></div></div>`;
+}
+// The occult expansion's reading of the ending (occult.js OCC_READINGS): the same Way Out, read by the way you walked
+// it, and the facts under it. No new endings.
+function occEnd(s) {
+  const o = s.asc && s.asc.occ;
+  if (!o) return "";
+  const path = pathOf(s);
+  const read = occReading(s, s.over);
+  const n = gatesPassed(s);
+  const how = [...new Set(Object.values(o.spheres).map((h) => MEANS[h]))].join(", ");
+  const facts = `${esc(PATHS[path].charAt(0).toUpperCase() + PATHS[path].slice(1))}. Gates passed: ${n} of 7${how ? ` (${esc(how)})` : ""}.${o.will ? ` Your will: ${esc(ORBIT[o.will])}.` : o.claimed ? " Another's will, named as yours." : ""}`;
+  return `${read ? `<p class="occread ${path}">${esc(read)}</p>` : ""}<p class="fine occfacts">${facts}</p>`;
 }
 // Order is the loop: what happened → why → go again / dare a friend → what you're collecting → what was hidden.
 function endHtml(s, text, info) {
   const e = ENDINGS[s.over];
   const n = nightsSurvived(s);
   const cause = endCause(s);
-  const keys = Object.keys(ENDINGS);
+  // The run's own collection: a regular run counts the endings it can reach; Exodus counts every one.
+  const keys = Object.keys(ENDINGS).filter((k) => s.mode === "ascension" || ENDINGS[k].family !== "unmaking");
   const found = keys.filter((k) => meta.endings[k]).length;
   const rival = s.mode === "vigil" ? meta.rivals[s.seedLabel] : null;
   const vs = rival && rival.nights != null
     ? `<p class="vs">${n > rival.nights ? `You outlasted them: <b>${n}</b> nights to their <b>${rival.nights}</b>.` : n === rival.nights ? `Dead even: <b>${plural(n, "night")}</b> each.` : `They lasted <b>${rival.nights}</b>. You lasted <b>${n}</b>.`}</p>`
     : "";
+  const d = s.asc && s.asc.dare;
+  const dareVs = d ? `<p class="vs">They reached <b>${esc(ACTS[d.act].name)}</b>${d.ending && ENDINGS[d.ending] ? ` (${esc(ENDINGS[d.ending].title)})` : ""}. You reached <b>${esc(ACTS[s.asc.act].name)}</b>.</p>` : "";
   const reveal = [
     s.cage > 0 ? `<p>The Cage stood at <b>${s.cage}/8</b>${s.cageSeen ? "" : ", and you never saw it"}. It grows when you take help without terms, comply, or let a kindness hook you.</p>` : "",
     s.apo > 0 ? `<p>Menace: <b>${s.apo}/6</b>. Every show of danger drew the wolves closer.</p>` : "",
   ].join("");
-  return `<div class="eyebrow">${s.mode === "vigil" ? `Vigil #${vigilNumber(s.seedLabel)}` : "Endless"} · Night ${s.day}</div>
+  const asc = s.mode === "ascension" ? ascSummary(s) : "";
+  return `<div class="eyebrow">${s.mode === "vigil" ? `Vigil #${vigilNumber(s.seedLabel)}` : s.mode === "ascension" ? `Exodus${s.asc.edict ? ` · Edict ${roman(s.asc.edict)}` : ""} · ${esc(ACTS[s.asc.act].name)}` : "Endless"} · Night ${s.day}</div>
     ${info.firstFind ? `<div class="newend">${e.win ? `Your first ${esc(e.title.replace(/^The /, ""))}` : "A new ending"}, ${found} of ${keys.length} found</div>` : ""}
-    <h2 class="big">${esc(e.title)}</h2><p class="line">${esc(e.line)}</p>
+    ${endingArt(s.over)}<h2 class="big">${esc(e.title)}</h2><p class="line">${esc(e.line)}</p>${occEnd(s)}
     <p class="endcause">${causeSentence(s)}${e.win ? `${esc(e.title)} on night ${s.day}.` : n === 0 ? (s.endBy === "nightfall" ? "It was your first night" : "You didn't reach the first nightfall") : `You lasted ${plural(n, "night")}`}${e.win ? "" : info.newBest ? `, <b class="best">your best yet</b>.` : meta.plays > 1 ? `. Your best is ${meta.best}.` : "."}</p>
     ${lesson(s)}
-    ${vs}
-    <div class="endact"><button class="btn primary" data-v="again" type="button">${s.mode === "vigil" ? "Run again · Endless" : "Run again"}</button>
+    ${vs}${dareVs}
+    <div class="endact"><button class="btn primary" data-v="again" type="button">${s.mode === "ascension" ? "Walk it again" : ascRun ? "Resume Exodus" : "Walk Exodus"}</button>
     <button class="btn" data-v="share" type="button">${s.mode === "vigil" ? "Challenge a friend" : "Share result"}</button></div>
     <div class="collect" aria-label="Endings found">${keys.map((k) => `<i class="${meta.endings[k] ? "on" : ""}${k === s.over && info.firstFind ? " new" : ""}${ENDINGS[k].win ? " win" : ""}"></i>`).join("")}<span>${found} of ${keys.length} endings</span></div>
     ${stillOut(info.stillOut)}
-    ${e.win ? "" : `<div class="crownprog"><div class="eyebrow">Double Crown</div><div><span>Untaggable ${s.untag}/12</span>${segs(s.untag, 12)}</div><div><span>Gnosis ${s.gnosis}/12</span>${segs(s.gnosis, 12)}</div>
+    ${asc}
+    ${info.opened && info.opened.length ? `<p class="stillout">Unsealed for your next Exodus: <b>${esc(info.opened.map(unlockName).join(", "))}</b>.</p>` : ""}
+    ${info.edict ? `<p class="stillout">The Dominion answers. <b>Edict ${roman(info.edict)}, ${esc(EDICTS[info.edict].name)}</b>, is yours to take on: ${esc(EDICTS[info.edict].text)}</p>` : ""}
+    ${e.win || asc ? "" : `<div class="crownprog"><div class="eyebrow">Double Crown</div><div><span>Untaggable ${s.untag}/12</span>${segs(s.untag, 12)}</div><div><span>Gnosis ${s.gnosis}/12</span>${segs(s.gnosis, 12)}</div>
     <div class="eyebrow">Ordinary Time</div><div><span>Bonds ${bondsEarned(s)}/3${s.flags.house ? " · a room" : ""}</span>${segs(bondsEarned(s) + (s.flags.house ? 1 : 0), 4)}</div></div>`}
     ${reveal ? `<div class="reveal">${reveal}</div>` : ""}
     <div class="nights" role="img" aria-label="Your nights, one tile each">${s.days.map((d) => `<i class="${esc(d)}" title="${NIGHT_TILE[d] || ""}"></i>`).join("")}</div>
     <p class="legend">${[...new Set(s.days)].map((d) => `<span><i class="${esc(d)}"></i>${NIGHT_TILE[d] || ""}</span>`).join("")}</p>
     <div class="row"><button class="btn ghost small" data-v="image" type="button">Share card</button>
+    ${s.mode === "vigil" && pastNights(todayISO()).some((d) => !meta.vigils[d]) ? `<button class="btn ghost small" data-v="past" type="button">Past Vigils</button>` : ""}
     <button class="btn ghost small" data-v="home" type="button">Menu</button></div>
     ${RULEBOOK_URL ? `<a class="fine" href="${RULEBOOK_URL}" target="_blank" rel="noopener">Play the full tabletop RPG: The Poisoner of False Light</a>` : ""}`;
 }
 
 async function showEnd(s, text, info) {
   for (;;) {
-    const v = await overlay(endHtml(s, text, info), { dismiss: false, cls: isWin(s) ? "won" : "" });
+    const v = await overlay(endHtml(s, text, info), { dismiss: false, cls: isWin(s) ? (s.mode === "ascension" ? "won free" : "won") : s.over === "decree" ? "kept" : "" });
     if (v === "share") await shareTextFlow(text);
     else if (v === "image") await shareImageFlow(s);
-    else if (v === "again") return start("endless");
+    // Endless lives on in Exodus's first act: after a Vigil (or an old Endless run) the way on is the long road.
+    else if (v === "again") return start("ascension");
+    else if (v === "past") return goHome(), pastVigils();
     else return goHome();
   }
 }
@@ -1348,7 +2162,7 @@ async function shareImageFlow(s) {
     const file = new File([blob], "false-light.png", { type: "image/png" });
     if (navigator.canShare({ files: [file] })) {
       try {
-        await navigator.share({ files: [file], text: shareText(s, shareUrl()) });
+        await navigator.share({ files: [file], text: shareText(s, shareUrl(), shareOpts(s)) });
         return;
       } catch (e) {
         if (e && e.name === "AbortError") return;
@@ -1386,16 +2200,30 @@ async function drawShareCard(s) {
   g.fillText("F A L S E   L I G H T", W / 2, 150);
   g.font = '500 26px Cinzel, Georgia, serif';
   g.fillStyle = "rgba(247,241,246,.6)";
-  g.fillText(s.mode === "vigil" ? `VIGIL #${vigilNumber(s.seedLabel)}` : "ENDLESS", W / 2, 200);
+  g.fillText(s.mode === "vigil" ? `VIGIL #${vigilNumber(s.seedLabel)} · ${s.seedLabel}` : s.mode === "ascension" ? `EXODUS${s.asc.edict ? ` · EDICT ${roman(s.asc.edict)}` : ""}` : "ENDLESS", W / 2, 200);
+  if (s.mode === "vigil") {
+    g.save();g.strokeStyle = "#c6aa70";g.lineWidth = 2;
+    for (const x of [70, W - 70]) for (const y of [250, H - 90]) {
+      g.beginPath();g.moveTo(x, y - 9);g.lineTo(x + 9, y);g.lineTo(x, y + 9);g.lineTo(x - 9, y);g.closePath();g.stroke();
+    }
+    g.restore();
+  }
   g.fillStyle = "#f7f1f6";
   g.font = '600 104px "Cormorant Garamond", Georgia, serif';
   wrap(g, e.title, W / 2, 400, W - 200, 104);
   g.font = 'italic 500 44px "Cormorant Garamond", Georgia, serif';
   g.fillStyle = "rgba(247,241,246,.72)";
   wrap(g, e.line, W / 2, 560, W - 220, 54);
+  // Tonight's card, once read: the same for everyone that night, so it's what two cards side by side have in common.
+  const read = vigilCardLine(s).replace(/^🃏 /, "");
+  if (read) {
+    g.font = '500 26px Cinzel, Georgia, serif';
+    g.fillStyle = "rgba(242,195,92,.85)";
+    g.fillText(`TONIGHT'S CARD · ${read.toUpperCase()}`, W / 2, 735);
+  }
   g.font = '600 40px Cinzel, Georgia, serif';
-  g.fillStyle = isWin(s) ? "#f2c35c" : "#e0008f";
-  g.fillText(isWin(s) ? `${s.over === "crown" ? "CROWNED" : "ORDINARY TIME"} ON NIGHT ${s.day}` : `${nightsSurvived(s)} NIGHT${nightsSurvived(s) === 1 ? "" : "S"} SURVIVED`, W / 2, 800);
+  g.fillStyle = s.over === "decree" ? "#c6aa70" : isWin(s) ? (s.mode === "ascension" ? "#eee5d3" : "#f2c35c") : "#e0008f";
+  g.fillText(s.over === "decree" ? "BY DECREE · KEPT" : isWin(s) ? `${s.over === "crown" ? "CROWNED" : s.over === "ordinary" ? "ORDINARY TIME" : "UNMADE"} ON NIGHT ${s.day}` : `${nightsSurvived(s)} NIGHT${nightsSurvived(s) === 1 ? "" : "S"} SURVIVED`, W / 2, 800);
   const cause = endCause(s);
   if (cause && cause.by) {
     g.font = '500 30px Inter, system-ui, sans-serif';
@@ -1417,7 +2245,7 @@ async function drawShareCard(s) {
   g.fillStyle = "rgba(247,241,246,.75)";
   g.fillText(`Gnosis ${s.gnosis}/12  ·  Untaggable ${s.untag}/12`, W / 2, 1075);
   if (s.cage > 0) {
-    g.fillStyle = "rgba(138,68,160,.95)";
+    g.fillStyle = "rgba(172,107,192,.95)"; // --porphyra-text: the Dominion's hue, light enough to read on the card
     g.fillText(s.cageSeen ? `The Cage: ${s.cage}/8` : `The Cage: ${s.cage}/8, never seen`, W / 2, 1125);
   }
   g.font = '500 26px Cinzel, Georgia, serif';
@@ -1449,7 +2277,12 @@ function wrap(g, text, x, y, max, lh) {
 
 // ---------- home ----------
 function goHome() {
+  delete document.body.dataset.mode;
+  delete document.body.dataset.act;
+  delete document.body.dataset.adversary;
   busy = false;
+  if (run && run.mode === "ascension") run = reg;
+  document.body.classList.remove("asc", "fight");
   setMood("home");
   $("layer").innerHTML = "";
   backdrop();
@@ -1461,13 +2294,46 @@ function goHome() {
 }
 
 const isoDay = (d) => d.toISOString().slice(0, 10);
+// The streak a Vigil's share carries: tonight's, played on the night and kept, counted with the nights before it.
+function shareOpts(s) {
+  if (s.mode !== "vigil" || s.late || s.over === "abandoned" || s.seedLabel !== todayISO()) return {};
+  return { streak: vigilStreak(s.seedLabel) + (meta.vigils[s.seedLabel] ? 0 : 1) };
+}
 function vigilStreak(today) {
-  const kept = (d) => meta.vigils[d] && meta.vigils[d].over !== "abandoned";
+  // A night played late, from the archive, doesn't keep a streak alive.
+  const kept = (d) => meta.vigils[d] && meta.vigils[d].over !== "abandoned" && !meta.vigils[d].late;
   const d = new Date(today + "T12:00:00Z");
   if (!meta.vigils[today]) d.setUTCDate(d.getUTCDate() - 1); // tonight's isn't played yet; the streak is still alive (an abandoned one breaks it)
   let n = 0;
   for (; kept(isoDay(d)); n++) d.setUTCDate(d.getUTCDate() - 1);
   return n;
+}
+
+// Every night since launch before tonight, newest first: the Vigil archive. Each is still one attempt.
+function pastNights(today) {
+  const out = [];
+  const d = new Date(today + "T12:00:00Z");
+  for (d.setUTCDate(d.getUTCDate() - 1); isoDay(d) >= LAUNCH_DAY; d.setUTCDate(d.getUTCDate() - 1)) out.push(isoDay(d));
+  return out;
+}
+async function pastVigils() {
+  const date = todayISO();
+  const open = run && run.mode === "vigil" && !run.over ? run.seedLabel : null;
+  const rows = pastNights(date)
+    .map((d) => {
+      const v = meta.vigils[d];
+      const head = `<span><b>Vigil #${vigilNumber(d)}</b> · ${d}</span>`;
+      if (v) return `<div class="past done"><span><b>Vigil #${vigilNumber(d)}</b> · ${d}<i>${esc(ENDINGS[v.over]?.title || "Abandoned")} · ${plural(+v.nights || 0, "night")}${v.late ? " · late" : ""}</i></span><button class="btn ghost small" data-v="share:${d}" type="button" aria-label="Share Vigil #${vigilNumber(d)}">Share</button></div>`;
+      return `<div class="past">${head}<button class="btn small" data-v="play:${d}" type="button">${open === d ? "Resume" : "Play"}</button></div>`;
+    })
+    .join("");
+  const v = await overlay(`<div class="eyebrow">Past Vigils</div><p class="fine">Every night since the first, same seed as everyone drew that night. One attempt each. A night played late doesn't count toward your streak.</p><div class="pasts">${rows}</div><button class="btn ghost" data-v="ok" type="button">Close</button>`, { dismiss: false });
+  const [k, d] = String(v).split(":");
+  if (k === "play") return start("vigil", d, { late: true });
+  if (k === "share") {
+    await shareTextFlow(meta.vigils[d].text || abandonedText(d));
+    return pastVigils();
+  }
 }
 
 function renderHome() {
@@ -1493,6 +2359,14 @@ function renderHome() {
       <p>${theirs}Same seed. One attempt. Can you last longer?</p>
       ${mine ?`<p>You lasted <b>${plural(+mine.nights || 0, "night")}</b> (${esc(ENDINGS[mine.over]?.title || "Abandoned")}).</p>` : vigRun && vigRun.seedLabel === ch.date ? `<button class="btn primary" id="b-challenge" type="button">Resume the challenge</button>` : `<button class="btn primary" id="b-challenge" type="button">Take the challenge</button>`}</div>`;
   }
+  // Someone sent their road: the same seed, at their Edict.
+  const road = incomingRoad;
+  if (road) {
+    const walking = ascRun && ascRun.seedLabel === road.seed;
+    html += `<div class="challenge" id="road-dare"><div class="eyebrow">A road, shared · Exodus${road.edict ? ` · Edict ${roman(road.edict)}` : ""}</div>
+      <p>They reached <b>${esc(ACTS[road.act].name)}</b>${road.ending && ENDINGS[road.ending] ? `: ${esc(ENDINGS[road.ending].title)}` : ""}. Same road, same draws until your choices part. The whole map is open on it.</p>
+      <button class="btn primary" id="b-road" type="button">${walking ? "Resume their road" : "Walk the same road"}</button></div>`;
+  }
   // An unfinished Vigil from an earlier night stays resumable; it never hides tonight's.
   const oldVig = vigRun && vigRun.seedLabel !== date && !(ch && vigRun.seedLabel === ch.date) ? vigRun : null;
   if (oldVig) html += `<button class="btn" id="b-vigil-old" type="button">Resume Vigil #${vigilNumber(oldVig.seedLabel)}</button>`;
@@ -1505,24 +2379,36 @@ function renderHome() {
     html += `<button class="btn primary" id="b-vigil" type="button">Tonight's Vigil #${n}</button>
       <span class="sub">${streak >= 2 ? `${streak} Vigils in a row so far. ` : ""}One attempt. Same seed for everyone.</span>`;
   }
-  html += `<button class="btn" id="b-endless" type="button">${resumeEndless ? "Resume endless run" : "Endless run"}</button>`;
-  if (resumeEndless) html += `<button class="sub" id="b-endless-new" type="button">Abandon it and start over</button>`;
-  else html += `<span class="sub">As many runs as you like. A new deck every time.</span>`;
+  if (pastNights(date).length) html += `<button class="sub" id="b-past" type="button">Past Vigils</button>`;
+  // Exodus: the long run, in its own slot. Its first movement is the Vigil's game; then the road goes on.
+  // It's the main door once tonight's Vigil is spent.
+  const ascMain = !!done && !road && !(ch && !ch.early && !meta.vigils[ch.date]);
+  html += `<button class="btn${ascMain ? " primary" : ""}" id="b-asc" type="button">${ascRun ? `Resume Exodus · ${esc(ACTS[ascRun.asc.act].name)}` : "Exodus"}</button>`;
+  if (ascRun) html += `<button class="sub" id="b-asc-new" type="button">Abandon it and start over</button>`;
+  else html += `<span class="sub">The long run. Three acts, four roads, an empty chair.</span>`;
+  // Endless was folded into Exodus (2026-10-17). A run saved before that can still be finished.
+  if (resumeEndless) html += `<button class="btn ghost" id="b-endless" type="button">Finish your last Endless run</button>`;
   $("menu").innerHTML = html;
   if ($("b-challenge")) $("b-challenge").onclick = () => start("vigil", ch.date);
   if ($("b-vigil")) $("b-vigil").onclick = () => start("vigil", date);
   if ($("b-vigil-old")) $("b-vigil-old").onclick = () => start("vigil", oldVig.seedLabel);
   if ($("b-vigil-done")) $("b-vigil-done").onclick = () => shareTextFlow(done.text || abandonedText(date));
-  $("b-endless").onclick = () => start("endless");
-  if ($("b-endless-new"))
-    $("b-endless-new").onclick = () => {
-      run = null;
-      store.del("fl.run");
-      start("endless");
-    };
+  if ($("b-endless")) $("b-endless").onclick = () => start("endless");
+  if ($("b-past")) $("b-past").onclick = pastVigils;
+  if ($("b-road")) $("b-road").onclick = () => start("ascension", undefined, { dare: road });
+  $("b-asc").onclick = () => start("ascension");
+  if ($("b-asc-new"))
+    $("b-asc-new").onclick = () =>
+      overlay(`<div class="eyebrow">Abandon this Exodus?</div><p class="line">It's in ${esc(ACTS[ascRun.asc.act].name)}. Abandoned, it's gone.</p><div class="row"><button class="btn primary" data-v="cancel" type="button">Keep it</button><button class="btn" data-v="abandon" type="button">Abandon it</button></div>`, { dismiss: false }).then((v) => {
+        if (v !== "abandon") return renderHome();
+        ascRun = null;
+        store.del("fl.asc");
+        start("ascension");
+      });
+  $("btn-codex").hidden = !(meta.asc.runs || ascRun);
   const found = Object.keys(meta.endings).length;
   $("stats").innerHTML = meta.plays
-    ? `<span><b>${meta.plays}</b>runs</span><span><b>${meta.best}</b>best nights</span><span><b>${found}/${Object.keys(ENDINGS).length}</b>endings</span><span><b>${meta.crowns}</b>wins</span>`
+    ? `<span><b>${meta.plays}</b>runs</span><span><b>${meta.crowns}</b>wins</span><span><b>${found}/${Object.keys(ENDINGS).length}</b>endings</span>${meta.asc.act ? `<span><b>${ROMAN_ACT[meta.asc.act]}</b>furthest act</span>` : `<span><b>${meta.best}</b>best nights</span>`}`
     : "";
   $("btn-sound").textContent = meta.mute ? "Sound off" : "Sound on";
   $("btn-music").textContent = meta.musicOff ? "Music off" : "Music on";
@@ -1548,10 +2434,37 @@ document.addEventListener("visibilitychange", () => document.hidden || homeClock
 // A walked-away Vigil has no score to beat, but it can still be passed on.
 const abandonedText = (date) => [`FALSE LIGHT · Vigil #${vigilNumber(date)} · VENEFICA LUX`, "I walked away from this one.", `Same seed. Your turn: ${shareUrl().split("#")[0]}#vigil-${date}`].join("\n");
 
-function start(mode, date = todayISO()) {
+// A road's seed is short enough to send: eight base-36 characters.
+const roadSeed = () => "ascension-" + Array.from({ length: 8 }, () => "0123456789abcdefghijklmnopqrstuvwxyz"[Math.floor(Math.random() * 36)]).join("");
+async function start(mode, date = todayISO(), { late = false, dare = null } = {}) {
   $("layer").innerHTML = "";
   backdrop();
   disarmMask();
+  if (mode === "ascension") {
+    // Its own slot: an Endless run or a Vigil in progress stays where it is.
+    if (run && run.mode !== "ascension") reg = run;
+    // A friend's road: the same seed at their Edict, with the whole map open (theirs may be bigger than yours).
+    if (dare && ascRun && ascRun.seedLabel !== dare.seed) {
+      const v = await overlay(`<div class="eyebrow">Abandon this Exodus?</div><p class="line">Walking their road ends yours, in ${esc(ACTS[ascRun.asc.act].name)}.</p><div class="row"><button class="btn primary" data-v="cancel" type="button">Keep mine</button><button class="btn" data-v="abandon" type="button">Walk theirs</button></div>`, { dismiss: false });
+      if (v !== "abandon") return goHome();
+      ascRun = null;
+      store.del("fl.asc");
+    }
+    if (!ascRun) {
+      const prev = meta.asc.lineage[meta.asc.lineage.length - 1] || null;
+      if (dare) {
+        ascRun = newGame({ seed: dare.seed, mode, tutorial: !meta.tutorialDone, locked: [], edict: dare.edict, prev });
+        ascRun.asc.dare = { act: dare.act, ending: dare.ending, edict: dare.edict };
+      } else {
+        const edict = await pickEdict();
+        ascRun = newGame({ seed: roadSeed(), mode, tutorial: !meta.tutorialDone, locked: sealed(), edict, prev });
+      }
+    }
+    run = ascRun;
+    saveRun();
+    return enter();
+  }
+  if (run && run.mode === "ascension") run = reg;
   const resumable = run && !run.over && run.mode === mode && (mode === "endless" || run.seedLabel === date);
   if (!resumable) {
     if (mode === "vigil" && meta.vigils[date]) return goHome();
@@ -1561,21 +2474,27 @@ function start(mode, date = todayISO()) {
         if (v !== 'abandon') return goHome();
         if (run.mode === 'vigil') {
           const previous = meta.vigils[run.seedLabel];
-          meta.vigils[run.seedLabel] = { over: "abandoned", nights: nightsSurvived(run), text: abandonedText(run.seedLabel) };
+          meta.vigils[run.seedLabel] = { over: "abandoned", nights: nightsSurvived(run), text: abandonedText(run.seedLabel), ...(run.late ? { late: true } : {}) };
           if (!saveMeta()) {
             if (previous) meta.vigils[run.seedLabel] = previous;
             else delete meta.vigils[run.seedLabel];
             return goHome();
           }
         }
-        run = null;
-        return start(mode, date);
+        run = reg = null;
+        return start(mode, date, { late });
       });
     }
     const seed = mode === "vigil" ? date : `endless-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
-    run = newGame({ seed, mode, tutorial: !meta.tutorialDone });
+    run = reg = newGame({ seed, mode, tutorial: !meta.tutorialDone });
+    // A night from the archive is played late: it keeps no streak. (A friend's dare for an old night is still a dare.)
+    if (late) run.late = true;
     saveRun();
   }
+  enter();
+}
+// Show the run on screen: the score, the board, the card, and anything a reload left half-asked.
+function enter() {
   lastVals = {};
   $("home").hidden = true;
   $("app").hidden = false;
@@ -1608,13 +2527,16 @@ function howTo() {
     <p><b>Bonds</b> are people: the Sister, the Sponsor, the Open Table. Each catches you once, from one kind of ending (Mark, Strain, a bad nightfall), then it's spent. Tap one to see what it saves.</p>
     <p><b>Win</b> one of two ways. Fill UNTAGGABLE and GNOSIS: the Double Crown. Or earn all three Bonds, get a room at the House, and rest through a night: Ordinary Time. Some things you won't see until it's too late to see them.</p>
     <p><b>Masks</b> open their own roads. Wear one and the city shows you cards it shows nobody else.</p>
-    <p><b>Vigil</b>: one daily run. Everyone draws from the same seed, and dice never reorder it, but your choices change which cards can appear. Share your result and the link carries the seed and your score. <b>Endless</b>: as many as you like.</p>
+    <p><b>Exodus</b> is the long run, as often as you like, in its own save slot. Its first movement is the Vigil's game, and the two wins above are early ways out of it; the Inquisition closes it. Four roads cross the second: the False Shepherd, the Ledger, the Hierarch, or the Geometry Sentinel. Rex Mundi never appears in person: his Grammar, Festival and oldest trap close the third. A fight's banner says what lands unless stopped, and its next intended move; ✓ stops it. Fill a road before the clock fills. Stop when it works, or stand on your progress at the last card. Near a full clock, Disengage leaves before the blow. A fight holds the Bell. Two relics fit beneath the Masks. At the end, an empty chair.</p>
+    <p><b>The Seven Spheres.</b> In Exodus each day belongs to one of the seven planets, and each holds something of yours: the Moon your Hollow, Mercury your Mark, Venus your Longing, the Sun the Pull, Mars your Strain, Jupiter your Favor, Saturn what closes on you. At nightfall a sphere lets you past if you gave back what it holds that day (its track fell, to its line), or by a way you found; its toll goes quiet. The sky sheet (the planet's glyph, top bar) shows the ladder. Under each chapel, a stair: two rites, one of the Serpent's Way and one of the Way of Return, each a gift, a limit and a risk; or the Sabbath. At the well, two accounts of the Architect, or neither. Neither way is the right one.</p>
+    <p><b>Vigil</b>: one daily run. Everyone draws from the same seed, and dice never reorder it, but your choices change which cards can appear. Share your result and the link carries the seed and your score. Missed a night? <b>Past Vigils</b> keeps every one since the first, one attempt each; a night played late doesn't count toward your streak.</p>
     <p><b>Leaving</b> a run (☰, top left) keeps it; it resumes from the menu. Starting a different run asks before it ends the old one, and a Vigil you walk away from still counts as your attempt.</p>
     <p><b>Offline.</b> Add it to your home screen from the browser's menu. Once it has opened online it plays offline; each track is kept after it first plays.</p></div>
-    <div class="row"><button class="btn small" data-v="masks" type="button">The Masks</button><button class="btn small" data-v="tut" type="button">Replay the tutorial</button><button class="btn ghost small" data-v="ok" type="button">Close</button></div>`,
+    <div class="row"><button class="btn small" data-v="masks" type="button">The Masks</button><button class="btn small" data-v="relics" type="button">Relics</button><button class="btn small" data-v="tut" type="button">Replay the tutorial</button><button class="btn ghost small" data-v="ok" type="button">Close</button></div>`,
     { dismiss: false },
   ).then((v) => {
     if (v === "masks") return masksGuide().then(howTo);
+    if (v === "relics") return relicGuide().then(howTo);
     if (v === "tut") {
       meta.tutorialDone = false;
       meta.hints = {};
@@ -1629,23 +2551,24 @@ function masksGuide() {
   const sign = (v) => (v < 0 ? "−" : "+") + Math.abs(v);
   const stats = Object.entries(STATS).map(([k, v]) => `${STAT_LABEL[k]} ${sign(v)}`).join(" · ");
   const rows = Object.entries(MASKS)
-    .map(([k, m]) => `<div class="mrow${run && !run.over && board().mask === k ? " on" : ""}">${svg(MASK_ART[k], 5)}<p><b>${m.name}</b> · ${m.bonus}. <span class="risk">Cost: ${m.risk}.</span><br>Wear it when ${m.use.charAt(0).toLowerCase()}${m.use.slice(1)}</p></div>`)
+    .map(([k, m]) => `<div class="mrow${run && !run.over && board().mask === k ? " on" : ""}"><div class="mask-key-art" data-mask="${k}" aria-hidden="true">${k === "bare" ? svg("door", 2) : ""}</div><p><b>${m.name}</b> · ${m.bonus}. <b>${m.gift}.</b> <span class="risk">Cost: ${m.risk}.</span>${m.seized ? `<br><span class="risk">When she takes the wheel · ${m.seized}.</span>` : ""}<br>Wear it when ${m.use.charAt(0).toLowerCase()}${m.use.slice(1)}</p></div>`)
     .join("");
   return overlay(
     `<div class="eyebrow">The Masks</div><div class="rules">
     <p>Rolls are 2d6 + a stat: 10+ clean, 7–9 at a cost. Your stats: <b>${stats}</b>. A Mask adds +1 to one of them, usually around 15 points on your odds. Each choice that rolls shows its odds with the Mask you're wearing.</p>
     ${rows}
     <p><b>Changing</b> is free at dawn (the first card of each day), then +1 Strain (+1 more at Hollow 2). Mid-day it's worth paying when the card in front of you rolls a stat another Mask raises and the roll matters. A new Mask starts its clock again: Nyx's third card and Eris's fourth count from when you put it on.</p>
-    <p><b>Seizure.</b> Once a day, with Strain 4+ and another meter near its limit, a Mask can try to answer for you: Eris facing a wolf, Lilith when Longing is high, otherwise Nyx. A clean roll keeps you sovereign (usually +1 Gnosis); 7–9 it stirs (let it, or hold the wheel for 1 Favor); worse, it seizes you until nightfall unless you pay +2 Strain.</p></div>
+    <p><b>Seizure.</b> Once a day, with Strain 4+ and another meter near its limit, a Mask can try to answer for you: Eris facing a wolf, Lilith when Longing is high, otherwise Nyx. A clean roll keeps you sovereign (usually +1 Gnosis); 7–9 it stirs (let it, or hold the wheel for 1 Favor); worse, it seizes you until nightfall unless you pay +2 Strain. A seized Mask plays by its own rules, above, and its own music.</p>
+    <p><b>${LIGHT.name}.</b> ${LIGHT.gift}. <span class="risk">${LIGHT.risk}.</span></p></div>
     <div class="row"><button class="btn ghost" data-v="ok" type="button">Close</button></div>`,
     { dismiss: false }, // the finger lifting off a long press must not close it
   );
 }
 
 function gallery() {
-  const rows = Object.entries(ENDINGS)
-    .map(([k, e]) => (meta.endings[k] ? `<div><h4>${esc(e.title)} · ×${meta.endings[k]}</h4><p>${esc(e.line)}</p></div>` : `<div class="locked"><h4>? ? ?</h4><p>${esc(e.hint || "Not yet found.")}</p></div>`))
-    .join("");
+  const row = ([k, e]) => (meta.endings[k] ? `<div><h4>${esc(e.title)} · ×${meta.endings[k]}</h4><p>${esc(e.line)}</p></div>` : `<div class="locked"><h4>? ? ?</h4><p>${esc(e.hint || "Not yet found.")}</p></div>`);
+  const all = Object.entries(ENDINGS);
+  const rows = all.filter(([, e]) => e.family !== "unmaking").map(row).join("") + `<div class="eyebrow">Ways Out · Exodus</div>` + all.filter(([, e]) => e.family === "unmaking").map(row).join("");
   return overlay(`<div class="eyebrow">Endings · ${Object.keys(meta.endings).length}/${Object.keys(ENDINGS).length}</div><div class="gallery">${rows}</div><button class="btn ghost" data-v="ok" type="button">Close</button>`, { dismiss: false });
 }
 
@@ -1663,8 +2586,10 @@ function toast(msg) {
 
 // ---------- boot ----------
 let incoming = null;
+let incomingRoad = null;
 function readChallenge() {
   const today = todayISO();
+  incomingRoad = parseExodus(location.hash);
   incoming = parseChallenge(location.hash, today);
   // A friend already past midnight sent tomorrow's Vigil. It can't be played here yet, but it isn't dropped:
   // the home screen says when it opens, and their score waits for that Vigil's end screen.
@@ -1693,6 +2618,7 @@ function boot() {
   $("btn-home").onclick = () => !busy && goHome();
   $("btn-how").onclick = howTo;
   $("btn-endings").onclick = gallery;
+  $("btn-codex").onclick = codex;
   $("btn-sound").onclick = () => {
     meta.mute = !meta.mute;
     saveMeta();
@@ -1710,7 +2636,47 @@ function boot() {
   // served stale; the browser gate uses it to prove the offline path.
   const swOk = location.protocol === "https:" || (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) && /[?&]sw\b/.test(location.search));
   if ("serviceWorker" in navigator && !inFrame && swOk) {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
+    navigator.serviceWorker.register("sw.js").then(watchUpdates, () => {});
   }
+}
+
+// ---------- updates ----------
+// A new release's worker installs in the background and then waits: sw.js doesn't skip waiting on its own, so the
+// code and caches under a run never change. The home screen is the only place that offers "Update ready"; tapping it
+// tells the waiting worker to take over (SKIP_WAITING), and the page reloads once it has. The waiting-worker pattern
+// is workbox-window's (MIT, https://github.com/GoogleChrome/workbox); the code is ours.
+let waitingWorker = null;
+let updating = false;
+function offerUpdate(worker) {
+  waitingWorker = worker;
+  const box = $("update");
+  if (!worker) return void (box.innerHTML = "");
+  box.innerHTML = `<button class="btn" id="b-update" type="button">Update ready</button><span class="sub">A new version is installed. Your run is saved; this reloads the game.</span>`;
+  $("b-update").onclick = () => {
+    if (updating) return;
+    updating = true;
+    $("b-update").disabled = true;
+    // The new worker takes control and controllerchange reloads the page. If it already had (another tab took it), or
+    // the message is lost, reload anyway: the page is on the home screen with nothing in flight.
+    worker.postMessage({ type: "SKIP_WAITING" });
+    setTimeout(() => location.reload(), 4000);
+  };
+}
+function watchUpdates(reg) {
+  // Only an update counts: the first-ever worker has no controller to replace and nothing waits for it.
+  const check = () => reg.waiting && navigator.serviceWorker.controller && offerUpdate(reg.waiting);
+  check();
+  reg.addEventListener("updatefound", () => {
+    const installing = reg.installing;
+    if (installing) installing.addEventListener("statechange", () => installing.state === "installed" && check());
+  });
+  navigator.serviceWorker.addEventListener("controllerchange", () => updating && location.reload());
+  // A game left open for days finds out about a release when it is looked at again, at most every half hour.
+  let lastLook = Date.now();
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden || Date.now() - lastLook < 30 * 60 * 1000) return;
+    lastLook = Date.now();
+    reg.update().catch(() => {});
+  });
 }
 boot();
