@@ -513,6 +513,61 @@ export function encBestRoad(s) {
   return best;
 }
 
+// One offer per relationship. It resolves an existing road and spends the existing emergency catch.
+const BOND_ARCS = {
+  inquisition: {
+    bond: "sister", road: "light", who: "The Sister",
+    text: "The clerk wants a quiet witness. The Sister has a copy of your statement. She can read it aloud, but she won't be able to hide you after.",
+    label: "Ask her to read it", catch: "Mark",
+    slip: "She signs her own name to the copy. Your Mark catch is spent.",
+    after: "The Sister's name is on the other copy now.",
+  },
+  hierarch: {
+    bond: "sponsor", road: "mandate", who: "The Sponsor",
+    text: "The Sponsor kept the order you brought her. She'll read it back in public. If she does, she can't be your call after lights-out.",
+    label: "Ask her to read it back", catch: "Strain",
+    slip: "She reads what it says. Nobody can call it your order now. Your Strain catch is spent.",
+    after: "The order went back up the ranks with a question attached.",
+  },
+  shepherd: {
+    bond: "table", road: "distribute", who: "The Open Table",
+    text: "The Table can move a bed outside his house. It was the one they'd kept for you. They ask before they carry it out.",
+    label: "Offer the bed", catch: "nightfall",
+    slip: "The bed goes out the back door, then somebody follows it. Your nightfall catch is spent.",
+    after: "There's an empty place at the door where the Table kept your bed.",
+  },
+  ledger: {
+    bond: "table", road: "clerk", who: "The Open Table",
+    text: "The clerk needs an address for someone the Ledger still counts. The Table can give them your place. They wait for your answer.",
+    label: "Give up your place", catch: "nightfall",
+    slip: "The clerk crosses out the debt. The Table keeps the place open for its new guest. Your nightfall catch is spent.",
+    after: "The Table has somebody else at your place tonight.",
+  },
+};
+export function bondOffer(s) {
+  const e = s.asc?.enc;
+  if (!(s.asc?.syn?.v >= 2) || !e || e.done || e.auditing || e.isolated || s.asc.occ?.rites.includes("name")) return null;
+  const offer = Object.hasOwn(BOND_ARCS, e.id) && BOND_ARCS[e.id];
+  if (!offer || !s.bonds.includes(offer.bond) || s.flags[`seen_bond_${offer.bond}`]) return null;
+  return e.roads[offer.road] === e.need[offer.road] - 1 ? offer : null;
+}
+
+const keepHelp = { label: "Keep your help", fx: {}, text: "They leave the offer there. The choice is still yours." };
+export const BOND_CARD = {
+  id: "d_bond", forcedOnly: true, noIntent: true, fixed: true, tier: 0, art: "candle",
+  who: "An offer of help", text: "The offer has passed. The fight goes on.",
+  left: { label: "Continue", fx: {} }, right: { label: "Keep going", fx: {} },
+  build(s) {
+    const offer = bondOffer(s);
+    if (!offer) return this;
+    return {
+      ...this, enc: s.asc.enc.id, who: offer.who, text: offer.text,
+      left: { label: offer.label, tag: `Spend ${offer.catch} catch`, fx: {} },
+      right: keepHelp,
+    };
+  },
+};
+
 export const ASC_CARDS = [
   {
     "id": "hi_open",
@@ -1589,7 +1644,9 @@ export const ASC_CARDS = [
       const k = a.spoils && a.offer.length ? a.offer[0] : null;
       // Never the relic in the occult expansion's vessel (occult.js), which a full slot can't give up.
       const full = k && a.relics.length >= relicCap(s) ? a.relics.find((r) => !(a.occ && a.occ.vessel && a.occ.vessel.k === r)) || null : null;
-      const text = a.act === 1 ? "A chapel that keeps its own counsel. One night here before the road goes on. You can feel a chair somewhere, from here." : this.text;
+      let text = a.act === 1 ? "A chapel that keeps its own counsel. One night here before the road goes on. You can feel a chair somewhere, from here." : this.text;
+      const last = a.met.at(-1)?.id;
+      if (a.syn?.v >= 2 && Object.hasOwn(BOND_ARCS, last) && s.flags[`resolved_bond_${last}`]) text += ` ${BOND_ARCS[last].after}`;
       return {
         ...this,
         text,

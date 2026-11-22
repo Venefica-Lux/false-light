@@ -14,12 +14,15 @@ import {
 import {
   ASC_CARDS, ASC_ENDINGS, ENCOUNTERS, INTENTS, RELICS, ROADS, ACTS, VERBS, NAMES, NAMED_BY, COMPLY, ECHO, PAY, encBestRoad, chairEnding, nextNamed, relicPair, UNLOCKS, ORDER_ROADS,
   EDICTS, MAX_EDICT, edict, pullAt, relicCap, bareAt,
-  temptation, witness, HEIRS,
+  temptation, witness, HEIRS, BOND_CARD, bondOffer,
 } from "./ascension.js";
+import { SYNERGIES, synergiesFor, synHost, limitKey, witnessBond, liftable } from "./synergy.js";
+import { PREP_CARDS, hourOffer, spoilsOffer, prepHost, routeIntel } from "./prep.js";
+import { RECIPES, RIT_LEVELS, RIT_CARDS, benchOffer, ritSee } from "./ritual.js";
 
 // Exodus's endings join the gallery; its cards stay out of CARDS (see ascension.js).
 Object.assign(ENDINGS, ASC_ENDINGS);
-export { CARDS, ENDINGS, SPARK_DAY, sparkDeck, heardDeck, ASC_CARDS, ENCOUNTERS, INTENTS, RELICS, ROADS, ACTS, VERBS, UNLOCKS, EDICTS, MAX_EDICT, encBestRoad, chairEnding, nextNamed, witness, pullAt, bareAt };
+export { CARDS, ENDINGS, SPARK_DAY, sparkDeck, heardDeck, ASC_CARDS, ENCOUNTERS, INTENTS, RELICS, ROADS, ACTS, VERBS, UNLOCKS, EDICTS, MAX_EDICT, encBestRoad, chairEnding, nextNamed, witness, pullAt, bareAt, SYNERGIES, synergiesFor };
 
 export const METERS = {
   mark: { max: 6, label: "Mark", hint: "The Warden's eye: how much they've noticed. At 6 you are Named." },
@@ -81,7 +84,7 @@ export const LAUNCH_DAY = "2026-09-30";
 const ARC_CARDS = readingCards((k) => RELICS[k].name);
 const ARC_IDS = new Set(ARC_CARDS.map((c) => c.id));
 const OCC_IDS = new Set(OCC_CARDS.map((c) => c.id));
-const BY_ID = Object.fromEntries([...CARDS, ...ASC_CARDS, ...ARC_CARDS, ...OCC_CARDS].map((c) => [c.id, c]));
+const BY_ID = Object.fromEntries([...CARDS, ...ASC_CARDS, ...ARC_CARDS, ...OCC_CARDS, ...RIT_CARDS, ...PREP_CARDS, BOND_CARD].map((c) => [c.id, c]));
 export const cardById = (id) => BY_ID[id];
 
 // The Great Occult Expansion (occult.js), in a run that has it (s.asc.occ). Without it each reader below is exactly the
@@ -180,7 +183,8 @@ const fresh = () => ({
 // without it plays the same cards with the same dice.
 // arcana (default on): false plays Exodus, or a Vigil from SPARK_DAY, without the Celestial Arcana (tests and sims).
 // occult (default on): false plays Exodus without the Great Occult Expansion (occult.js; tests and sims).
-export function newGame({ seed = "endless", mode = "endless", tutorial = false, locked = [], edict: ed = 0, prev = null, arcana = true, occult = true } = {}) {
+// depth: false plays the original road, 1 replays M3, 2 replays M4, and true or 3 starts the current rules.
+export function newGame({ seed = "endless", mode = "endless", tutorial = false, locked = [], edict: ed = 0, prev = null, arcana = true, occult = true, depth = true } = {}) {
   const s = Object.assign(fresh(), {
     mode,
     seedLabel: String(seed),
@@ -209,6 +213,8 @@ export function newGame({ seed = "endless", mode = "endless", tutorial = false, 
     s.forced.push(mode === "vigil" ? "r_vigil" : "r_omen");
   }
   if (mode === "ascension" && occult) s.asc.occ = freshOcc(s);
+  // The Depth Pass (synergy.js): all its state lives under asc.syn, only on a run begun with it. seq numbers the fights.
+  if (mode === "ascension" && occult && depth) s.asc.syn = { v: depth === 1 ? 1 : depth === 2 ? 2 : 3, seq: 0, used: {}, fired: {}, laid: null, ease: 0, witnessed: [], rit: { done: {}, seen: [], log: [] }, prep: { v: 1, hours: {}, ready: null, plus: {}, log: {}, spoils: 0 } };
   draw(s);
   return s;
 }
@@ -216,7 +222,10 @@ export function newGame({ seed = "endless", mode = "endless", tutorial = false, 
 // A card with build() is read through it, so the preview, the costs, the UI and the turn all see the same card.
 export const currentCard = (s) => {
   const c = BY_ID[s.cardId];
-  const b = c && c.build ? c.build(s) : c;
+  let b = c && c.build ? c.build(s) : c;
+  // Strategic preparation (prep.js): the road cards carry the dossier on each keeper, only on a run with it.
+  const intel = s.asc && b ? routeIntel(s, b) : null;
+  if (intel) b = { ...b, intel };
   return s.asc && b ? encWrap(s, b) : b;
 };
 
@@ -238,7 +247,87 @@ export function migrate(s) {
   if (s.mode === "ascension") migrateAsc(s);
   if ("arc" in s) migrateArc(s);
   if (s.asc && "occ" in s.asc) migrateOcc(s);
+  if (s.asc && "syn" in s.asc) migrateSyn(s);
+  if (s.asc) {
+    const unavailable = (id) => {
+      if (id === BOND_CARD.id) return !bondOffer(s);
+      return (id === "d_hour" || id === "d_spoils") && !s.asc.syn?.prep;
+    };
+    s.forced = s.forced.filter((id) => !unavailable(id));
+    if (!s.over && unavailable(s.cardId)) draw(s);
+  }
   return s;
+}
+// The Depth Pass's state (synergy.js): repaired where it can be, dropped where it can't (the run then plays on without
+// synergies), and never grafted onto a run that didn't carry it. It needs the expansion it is part of.
+function migrateSyn(s) {
+  const a = s.asc;
+  const y = a.syn;
+  if (!y || typeof y !== "object" || Array.isArray(y) || !a.occ) {
+    delete a.syn;
+    s.forced = s.forced.filter((id) => id !== "o_bench");
+    if (s.cardId === "o_bench") draw(s);
+    return;
+  }
+  const rec = (o) => (o && typeof o === "object" && !Array.isArray(o) ? o : {});
+  y.v = y.v === 2 || y.v === 3 ? y.v : 1;
+  y.seq = Number.isInteger(y.seq) && y.seq >= 0 ? y.seq : 0;
+  y.used = Object.fromEntries(Object.entries(rec(y.used)).filter(([, v]) => v === true || (Number.isInteger(v) && v > 0)));
+  y.fired = Object.fromEntries(Object.entries(rec(y.fired)).filter(([k, v]) => SYNERGIES.some((x) => x.id === k) && Number.isInteger(v) && v > 0));
+  if (y.laid !== "revelation") y.laid = null;
+  y.ease = Number.isFinite(y.ease) ? Math.max(0, Math.min(2, Math.floor(y.ease))) : 0;
+  y.witnessed = Array.isArray(y.witnessed) ? [...new Set(y.witnessed.filter((b) => typeof b === "string" && BONDS[b]))] : [];
+  // The workbench's record (ritual.js): each recipe worked once, what was shown, and the last few workings.
+  const known = (id) => RECIPES.some((r) => r.id === id);
+  const r = rec(y.rit);
+  y.rit = {
+    done: Object.fromEntries(Object.entries(rec(r.done)).filter(([k, v]) => known(k) && RIT_LEVELS.includes(v))),
+    seen: Array.isArray(r.seen) ? [...new Set(r.seen.filter((id) => typeof id === "string" && known(id)))] : [],
+    log: (Array.isArray(r.log) ? r.log : [])
+      .filter((x) => x && typeof x === "object" && known(x.id) && RIT_LEVELS.includes(x.res))
+      .map((x) => ({ id: x.id, res: x.res, miss: Array.isArray(x.miss) ? x.miss.filter((m) => m === "hour" || m === "know") : [] }))
+      .slice(-12),
+  };
+  // Strategic preparation (prep.js): its own state, dropped alone if malformed; never grafted onto a run that lacked it.
+  if ("prep" in y) migratePrep(s);
+  else s.forced = s.forced.filter((id) => id !== "d_hour" && id !== "d_spoils");
+  const e = a.enc;
+  if (e) {
+    // A fight keeps its own id, and never has fewer than the run has numbered.
+    if (!Number.isInteger(e.uid) || e.uid < 1) e.uid = ++y.seq;
+    y.seq = Math.max(y.seq, e.uid);
+    if (e.strike !== undefined) e.strike = Array.isArray(e.strike) ? [...new Set(e.strike.filter((k) => INTENTS[k]))] : [];
+    if (e.cls !== undefined) e.cls = Object.fromEntries(Object.entries(rec(e.cls)).filter(([, v]) => Number.isFinite(v)));
+    // A Read readied at a chapel (prep.js): a flag and the intent after next, repaired, never invented.
+    if (e.read !== undefined) e.read = e.read === true;
+    if (e.next2 !== undefined) e.next2 = typeof e.next2 === "string" && INTENTS[e.next2] ? e.next2 : null;
+  }
+}
+
+function migratePrep(s) {
+  const y = s.asc.syn;
+  const p = y.prep;
+  const rec = (o) => (o && typeof o === "object" && !Array.isArray(o) ? o : null);
+  if (!rec(p) || !rec(p.hours) || !rec(p.plus) || !rec(p.log) || (p.ready !== null && !rec(p.ready))) {
+    delete y.prep;
+    s.forced = s.forced.filter((id) => id !== "d_hour" && id !== "d_spoils");
+    if (s.cardId === "d_hour" || s.cardId === "d_spoils") draw(s);
+    return;
+  }
+  p.v = 1;
+  p.hours = Object.fromEntries(Object.entries(p.hours).filter(([k, v]) => (k === "1" || k === "2") && v === true));
+  p.plus = Object.fromEntries(Object.entries(p.plus).filter(([k, v]) => RELICS[k] && v === 1));
+  p.spoils = Number.isInteger(p.spoils) && p.spoils > 0 ? Math.min(p.spoils, 2) : 0;
+  p.log = Object.fromEntries(
+    Object.entries(p.log)
+      .filter(([k, v]) => ENCOUNTERS[k] && rec(v))
+      .map(([k, v]) => [k, { did: v.did === "strike" || v.did === "read" ? v.did : null, won: v.won === true }]),
+  );
+  const r = p.ready;
+  if (r) {
+    const ok = typeof r.enc === "string" && ENCOUNTERS[r.enc] && (r.kind === "strike" || r.kind === "read");
+    p.ready = ok ? { enc: r.enc, kind: r.kind, strike: Array.isArray(r.strike) ? [...new Set(r.strike.filter((k) => INTENTS[k]))] : [] } : null;
+  }
 }
 
 // ---------- dice ----------
@@ -705,7 +794,7 @@ function encPreview(s, side, ch, runs) {
 export function cardCosts(s) {
   const c = currentCard(s);
   const out = [];
-  if (!c || c.tutorial || s.over) return out;
+  if (!c || c.tutorial || c.id === BOND_CARD.id || s.over) return out;
   const tax = s.hollow >= 2 ? 1 : 0;
   // short: the same fact when the line under the card has to hold more than one.
   if (s.mask === "bare" && c.tier >= 2 && wolfStrain(s, c.tier)) out.push({ id: "wolf", text: `Bare-faced before a wolf: +${wolfStrain(s, c.tier) + tax} Strain either way`, short: `Wolf, bare-faced: +${wolfStrain(s, c.tier) + tax} Strain` });
@@ -729,7 +818,11 @@ function ascCosts(s, c, tax) {
   const e = a.enc;
   if (e && c.enc === e.id) {
     const def = ENCOUNTERS[e.id];
-    if (e.sealed) out.push({ id: "seal", text: `Sealed ${e.sealed === "left" ? "◀" : "▶"}: answering that side costs +${2 + tax} Strain`, short: `Sealed ${e.sealed === "left" ? "◀" : "▶"}: +${2 + tax} Strain` });
+    if (e.sealed) {
+      const side = e.sealed === "left" ? "◀" : "▶";
+      if (synergiesFor(s, "seal").length) out.push({ id: "seal", text: `Sealed ${side}: answering that side costs the clock −1, Strain +${1 + tax}, Longing +1 (the Velvet Intervention)`, short: `Sealed ${side}: Strain +${1 + tax}, Longing +1` });
+      else out.push({ id: "seal", text: `Sealed ${e.sealed === "left" ? "◀" : "▶"}: answering that side costs +${2 + tax} Strain`, short: `Sealed ${e.sealed === "left" ? "◀" : "▶"}: +${2 + tax} Strain` });
+    }
     const left = def.cap - e.turn;
     if (s.communion > 0 && s.communion <= left && c.id !== "whisper") out.push({ id: "reckon", text: `The Reckoning lands inside this fight, in ${s.communion} card${s.communion === 1 ? "" : "s"}`, short: `Reckoning in ${s.communion}` });
     const clockName = def.clock.hidden && !s.cageSeen ? "Something" : def.clock.label;
@@ -744,6 +837,11 @@ function ascCosts(s, c, tax) {
     out.push(a.freed >= 1
       ? { id: "gate", text: `Ahead, the gate holds for the Named only at the Pull ${pullAt(s, 1)} or less (now ${s.apo})`, short: `Gate: Pull ≤${pullAt(s, 1)}, now ${s.apo}` }
       : { id: "gate", text: `Ahead, the Return asks the Pull ${pullAt(s, 1)} or less (now ${s.apo})`, short: `Return: Pull ≤${pullAt(s, 1)}, now ${s.apo}` });
+  if (c.stop && e && e.done) {
+    const t = synergiesFor(s, "stop", { finish: false })[0];
+    if (t) out.push({ id: "throne", text: `Stopping here: the Pull −1, a Halo use, the next fight a step slower (${t.name}). Finishing: the Pull +1 more`, short: "Stop: Pull −1, Halo use" });
+    else if (synergiesFor(s, "stop", { finish: true }).length) out.push({ id: "throne", text: "Halo and Crown carried: finishing is the Pull +1 more (The Empty Throne)", short: "Finish: Pull +1 more" });
+  }
   if (c.id === "a_gate") {
     const end = chairEnding(s);
     out.push({ id: "chair", text: `Ahead, the chair: ${end ? ENDINGS[end].title : "nothing earned yet but the walk away"}`, short: `Chair: ${end ? ENDINGS[end].title : "walk away"}` });
@@ -765,6 +863,15 @@ const nyxPeriod = (s) => Math.max(2, (s.maskLocked ? 2 : 3) + ({ up: 1, rev: -1 
 // opts.tier forces a roll's outcome; only preview() uses it, on a copy.
 export function choose(s, side, opts = {}) {
   if (s.over) return null;
+  // Declining an offer returns to the pending fight without spending time or the Bond.
+  if (s.cardId === BOND_CARD.id && (side === "right" || !bondOffer(s))) {
+    const ch = currentCard(s)[side];
+    const offer = bondOffer(s);
+    if (offer) s.flags[`seen_bond_${offer.bond}`] = true;
+    const board = copy(s);
+    draw(s);
+    return { side, label: ch.label, roll: null, delta: {}, text: ch.text, notes: [], ending: null, nightfall: null, card: BOND_CARD.id, event: s.lastEvent, spent: [], board };
+  }
   if (s.stir) resolveStir(s, false); // an unanswered stir means the Mask answered
   const card = currentCard(s);
   const ch = card[side];
@@ -809,6 +916,12 @@ export function choose(s, side, opts = {}) {
     for (const d of standing(s))
       if (d.t === "tier" && d.tier === group && (d.stat === "any" ? roll.stat !== "fortune" : d.stat === roll.stat)) applyFx(s, d.fx, notes), notes.push(`${d.from}: ${fxWords(d.fx)}.`);
   }
+  if (s.asc && s.asc.syn && s.asc.syn.laid) {
+    // A revelation laid by the Glass pays on this card's roll (synergy.js); it never outlives the card.
+    if (roll && (roll.tier === "radiance" || roll.tier === "hit")) applyFx(s, { gnosis: 1 }, notes), notes.push("The Dangerous Revelation lands: Gnosis +1.");
+    else if (roll && (roll.tier === "ruin" || roll.tier === "miss")) applyFx(s, { longing: 1, mark: 1 }, notes), notes.push("The Dangerous Revelation costs you: Longing +1, Mark +1.");
+    s.asc.syn.laid = null;
+  }
   const eking = s.arc ? courtOn(s, "king", "eris") : null; // the King holds Severance: clean, or forgetting nothing
   if (severs && s.mark > 0 && eking !== "rev") applyFx(s, { mark: eking === "up" ? -2 : -1 }, notes), notes.push(eking === "up" ? "Severance cuts clean. The wolf forgets you: Mark −2." : "Severance holds clean. The wolf forgets you a little: Mark −1.");
   if (loud && eking !== "up") applyFx(s, { mark: eking === "rev" ? 2 : 1 }, notes), notes.push(`The fight went the other way, loudly: Mark +${eking === "rev" ? 2 : 1}.`);
@@ -844,6 +957,42 @@ export function choose(s, side, opts = {}) {
   // Exodus: the adversary's intent, its clock and roads, the Act's bookkeeping.
   const encTurn = s.asc ? ascTurn(s, card, ch, side, roll, before, encBefore, notes) : null;
 
+  if (card.id !== BOND_CARD.id) turnPressure(s, card, notes);
+
+  checkEnd(s, card, notes, {});
+  if (s.over) s.endBy = s.endBy || card.id;
+
+  // The board as this card left it, before the night and the next draw: what the HUD shows under the card's
+  // slip, so a day's last card isn't credited with the night, nor any card with the next card's Activation.
+  // Exodus: a fight holds the Bell (it's one long scene), and the night falls when the fight ends.
+  const held = !!(s.asc && encBefore);
+  const fightEnds = held && !!(encTurn && encTurn.resolved);
+  const board = { ...s, bell: s.over || held ? s.bell : s.bell + 1, bonds: [...s.bonds], spent: [...(s.spent || [])], flags: { ...s.flags } };
+  if (s.asc) board.asc = JSON.parse(JSON.stringify(s.asc));
+  if (s.arc) board.arc = JSON.parse(JSON.stringify(s.arc));
+  let nightfall = null;
+  if (!s.over) {
+    if (!held) s.bell++;
+    if (s.bell >= CARDS_PER_DAY || fightEnds) {
+      // The night's own share of the turn, so the UI can say what the card did and what the night did.
+      const pre = Object.fromEntries(TRACKED.map((k) => [k, s[k]]));
+      const from = notes.length;
+      nightfall = night(s, notes, {});
+      nightfall.delta = Object.fromEntries(TRACKED.filter((k) => s[k] !== pre[k]).map((k) => [k, s[k] - pre[k]]));
+      nightfall.notes = notes.slice(from);
+    }
+  }
+  const delta = measure(); // before the next draw, whose Activation roll is reported separately
+  const enc = s.asc ? encReport(s, encBefore, encTurn) : null;
+  if (!s.over) draw(s);
+  else if (!nightfall) closeDay(s); // night() already closed the day it ended on
+  const res = { side, label: ch.label, roll, delta, text, notes, ending: s.over, nightfall, card: card.id, event: s.lastEvent, spent: spentNow(), board };
+  if (enc) res.enc = enc;
+  return res;
+}
+
+// Pressure ticks only on a regular card, never on a Bond's offer of help.
+function turnPressure(s, card, notes) {
   // Mask risks
   s.maskAge++;
   const wolf = s.mask === "bare" && card.tier >= 2 ? wolfStrain(s, card.tier) : 0;
@@ -876,37 +1025,6 @@ export function choose(s, side, opts = {}) {
   }
 
   if (s.mark >= 5 || s.strain >= 5) s.dayMarks.push("edge");
-
-  checkEnd(s, card, notes, {});
-  if (s.over) s.endBy = s.endBy || card.id;
-
-  // The board as this card left it, before the night and the next draw: what the HUD shows under the card's
-  // slip, so a day's last card isn't credited with the night, nor any card with the next card's Activation.
-  // Exodus: a fight holds the Bell (it's one long scene), and the night falls when the fight ends.
-  const held = !!(s.asc && encBefore);
-  const fightEnds = held && !!(encTurn && encTurn.resolved);
-  const board = { ...s, bell: s.over || held ? s.bell : s.bell + 1, bonds: [...s.bonds], spent: [...(s.spent || [])], flags: { ...s.flags } };
-  if (s.asc) board.asc = JSON.parse(JSON.stringify(s.asc));
-  if (s.arc) board.arc = JSON.parse(JSON.stringify(s.arc));
-  let nightfall = null;
-  if (!s.over) {
-    if (!held) s.bell++;
-    if (s.bell >= CARDS_PER_DAY || fightEnds) {
-      // The night's own share of the turn, so the UI can say what the card did and what the night did.
-      const pre = Object.fromEntries(TRACKED.map((k) => [k, s[k]]));
-      const from = notes.length;
-      nightfall = night(s, notes, {});
-      nightfall.delta = Object.fromEntries(TRACKED.filter((k) => s[k] !== pre[k]).map((k) => [k, s[k] - pre[k]]));
-      nightfall.notes = notes.slice(from);
-    }
-  }
-  const delta = measure(); // before the next draw, whose Activation roll is reported separately
-  const enc = s.asc ? encReport(s, encBefore, encTurn) : null;
-  if (!s.over) draw(s);
-  else if (!nightfall) closeDay(s); // night() already closed the day it ended on
-  const res = { side, label: ch.label, roll, delta, text, notes, ending: s.over, nightfall, card: card.id, event: s.lastEvent, spent: spentNow(), board };
-  if (enc) res.enc = enc;
-  return res;
 }
 
 export function accelerants(s, card) {
@@ -1093,7 +1211,8 @@ function draw(s) {
   if (s.asc) ascBeforeDraw(s); // an adversary arrives at dawn
   while (s.forced.length && !id) {
     const f = s.forced.shift();
-    if (BY_ID[f]) id = f;
+    // the bench, and the Hour (prep.js), are dealt only with something on them
+    if (BY_ID[f] && !(f === "o_bench" && !benchOffer(s)) && !(f === "d_hour" && !hourOffer(s)) && !(f === "d_spoils" && !spoilsOffer(s)) && !(f === BOND_CARD.id && !bondOffer(s))) id = f;
   }
   if (!id && s.asc && s.asc.enc) id = encDraw(s);
   if (!id) {
@@ -1115,8 +1234,9 @@ function draw(s) {
     id = id || (pool[pool.length - 1] || CARDS.find((c) => c.id === "meal")).id;
   }
   s.cardId = id;
+  if (id === "o_bench") ritSee(s);
   if (s.asc) ascAfterDraw(s); // the adversary's intent for this card, and any seal
-  seizure(s);
+  if (id !== BOND_CARD.id) seizure(s);
 }
 
 // Activation Seizure (§9.5): under load, who decides which frequency answers?
@@ -1379,6 +1499,9 @@ function occFx(s, v, notes) {
   const o = s.asc.occ;
   if (!o || !v || typeof v !== "object") return;
   if (v.next) s.forced.unshift(v.next);
+  // Going down the stair also queues the bench behind the rites, in a run that carries the Depth Pass (ritual.js).
+  if (v.next === "o_rites" && s.asc.syn && s.asc.syn.rit) s.forced.splice(1, 0, "o_bench");
+  if (v.rit) ritWork(s, v, notes);
   if (v.rite && RITES[v.rite] && !o.rites.includes(v.rite)) {
     o.rites.push(v.rite);
     notes.push(`${RITES[v.rite].name}: ${RITES[v.rite].gift}.`);
@@ -1429,6 +1552,25 @@ function occFx(s, v, notes) {
     }
   }
   if (v.claim) o.claimed = true;
+}
+
+// The workbench (ritual.js): the card's tracks have already landed (they are the preview); this records the working and
+// pays what a track can't say. miss was read when the card was built, before those tracks moved the knowledge.
+function ritWork(s, v, notes) {
+  const rit = s.asc.syn && s.asc.syn.rit;
+  const r = RECIPES.find((x) => x.id === v.rit);
+  if (!rit || !r || !RIT_LEVELS.includes(v.lv) || rit.done[r.id]) return;
+  const x = r[v.lv].extra || {};
+  if (x.ease) s.asc.syn.ease = Math.min(2, s.asc.syn.ease + x.ease);
+  if (x.debt && SPHERES[x.debt]) s.asc.occ.debts.push({ p: x.debt, n: 1 });
+  if (x.bond) {
+    const b = s.spent.find((k) => BONDS[k]);
+    if (b) (s.spent = s.spent.filter((k) => k !== b)), s.bonds.push(b);
+  }
+  rit.done[r.id] = v.lv;
+  rit.log.push({ id: r.id, res: v.lv, miss: (Array.isArray(v.miss) ? v.miss : []).filter((m) => m === "hour" || m === "know") });
+  rit.log = rit.log.slice(-12);
+  notes.push(`${r.name}: ${r[v.lv].say}`);
 }
 
 // What the Seven are owed, collected at a fight's start: each debt's garment, as many times as its price, never the
@@ -1567,7 +1709,11 @@ function ascFx(s, k, v, notes) {
       if (e) e.sealNext = true;
       break;
     case "classify":
-      if (e) e.mods[v] = Math.max(-1, (e.mods[v] || 0) - 1);
+      if (e) {
+        // A run with synergies remembers what Classify replaced, so the Unseen Countermeasure can give it back exactly.
+        if (a.syn) (e.cls = e.cls || {}), v in e.cls || (e.cls[v] = e.mods[v] || 0);
+        e.mods[v] = Math.max(-1, (e.mods[v] || 0) - 1);
+      }
       break;
     case "pattern":
       if (e) (e.pattern = v), (e.patternAt = e.turn + 1);
@@ -1582,6 +1728,8 @@ function ascFx(s, k, v, notes) {
         notes.push(`Act II · Death. ${ROADS[v].name}.`);
         // The expansion (occult.js): the well past the Warrens, and the two accounts of the Architect.
         if (a.occ && !a.occ.account && OCC_TUNING.well) occQueue(s, ["o_voices"], "front");
+        // Strategic preparation (prep.js): a night spent preparing at the first chapel buys an Hour against this road's keeper.
+        if (a.syn && a.syn.prep && a.occ && a.occ.chapel === 1 && a.occ.prepared === 1) s.forced.push("d_hour");
       }
       break;
     case "camp":
@@ -1611,8 +1759,11 @@ function ascFx(s, k, v, notes) {
       break;
     case "refill":
       if (a.occ) a.occ.prepared = a.occ.chapel;
-      for (const r of a.relics) if (!isStone(s, r)) a.charges[r] = RELICS[r].uses; // a Stone works once (occult.js)
+      // A Stone works once (occult.js); a relic refined from the Spoils (prep.js) holds one use more.
+      for (const r of a.relics) if (!isStone(s, r)) a.charges[r] = RELICS[r].uses + ((a.syn && a.syn.prep && a.syn.prep.plus[r]) || 0);
       if (a.relics.length) notes.push("Your relics are ready again.");
+      // The second chapel's Prepare buys an Hour against the Grammar (prep.js).
+      if (a.act === 3 && a.syn && a.syn.prep && a.occ) s.forced.push("d_hour");
       break;
     case "gilt":
       s.gilt = (s.gilt || 0) + v;
@@ -1642,6 +1793,36 @@ function ascFx(s, k, v, notes) {
     case "occ":
       occFx(s, v, notes);
       break;
+    case "prep":
+      prepFx(s, v, notes);
+      break;
+  }
+}
+
+// What a preparation's price lands on this board (prep.js prices its cards' words with it): the same applyFx the
+// choice runs, on a copy.
+prepHost.land = (s, fx) => applyFx(JSON.parse(JSON.stringify(s)), fx, []);
+// Strategic preparation's fx key (prep.js): the Hour spent, and what it readied for the next fight.
+function prepFx(s, v, notes) {
+  const p = s.asc.syn && s.asc.syn.prep;
+  if (!p || !v || typeof v !== "object") return;
+  if (v.hour === 1 || v.hour === 2) p.hours[v.hour] = true;
+  if (v.spoils === "relic" || v.spoils === "cut" || v.spoils === "refine") {
+    const a = s.asc;
+    p.spoils = Math.min(2, p.spoils + 1);
+    if (v.spoils === "cut" && v.chain && !a.struck.includes(v.chain) && a.struck.length < 6) a.struck.push(v.chain), (a.spoils = false), notes.push("A Chain struck: the Grammar can't say it.");
+    if (v.spoils === "refine" && RELICS[v.relic]) {
+      p.plus[v.relic] = 1;
+      a.spoils = false;
+      // -d3: the use is in hand at once (never past the refined uses), and still one more at each Prepare.
+      const now = a.syn.v >= 3 && a.relics.includes(v.relic) && !isStone(s, v.relic);
+      if (now) a.charges[v.relic] = Math.min((a.charges[v.relic] || 0) + 1, RELICS[v.relic].uses + 1);
+      notes.push(`${RELICS[v.relic].name}: one use more${now ? " now, and" : ""} each time it is readied.`);
+    }
+  }
+  if (v.ready && ENCOUNTERS[v.ready.enc]) {
+    p.ready = { enc: v.ready.enc, kind: v.ready.kind === "read" ? "read" : "strike", strike: [...(v.ready.strike || [])].filter((k) => INTENTS[k]) };
+    notes.push(`Ready for ${ENCOUNTERS[v.ready.enc].name || v.ready.enc}: ${p.ready.kind === "read" ? "the intent after next will show" : "one of its intents is struck"}.`);
   }
 }
 
@@ -1691,15 +1872,82 @@ function counterOf(s, def) {
 }
 
 // The intents this phase can show, each as many times as its weight (a Chain you gave in to, twice as often).
-function intentBag(s, e) {
+// What the phase can show. A struck intent (the Unfiled Name) is out of the fight's bag, but never the last one: a bag
+// the strikes would empty is the whole bag (raw: what the strikes leave, which can be nothing, for the synergy's check).
+function intentBag(s, e, raw = false) {
   const a = s.asc;
-  const ids = (ENCOUNTERS[e.id].phases[e.phase].intents || []).filter((k) => (!INTENTS[k].when || INTENTS[k].when(s)) && !a.struck.includes(INTENTS[k].chain));
+  const all = (ENCOUNTERS[e.id].phases[e.phase].intents || []).filter((k) => (!INTENTS[k].when || INTENTS[k].when(s)) && !a.struck.includes(INTENTS[k].chain));
+  const left = e.strike ? all.filter((k) => !e.strike.includes(k)) : all;
+  const ids = left.length || raw ? left : all;
   return ids.flatMap((k) => Array((INTENTS[k].weight || 1) * (INTENTS[k].chain && a.chains[INTENTS[k].chain] ? 2 : 1)).fill(k));
 }
 const pick = (s, e, salt, xs) => (xs.length ? xs[hashSeed(`${s.seedLabel}:${e.id}:${salt}`) % xs.length] : null);
 // The intent telegraphed for the next fight card ("next: Seal").
 function telegraph(s, e) {
   e.next = pick(s, e, e.turn + 1, intentBag(s, e));
+  // A Read readied at a chapel (prep.js): the intent after next, by the same pick the next turn will make if nothing
+  // changes the bag. Shown as "then, likely"; a fight card can still re-pick (ascAfterDraw).
+  if (e.read) e.next2 = pick(s, e, e.turn + 2, intentBag(s, e));
+}
+
+// ---------- the Depth Pass (synergy.js) ----------
+synHost.bag = (s, e) => intentBag(s, e, true);
+synHost.people = (e) => Object.keys(ENCOUNTERS[e.id].roads).find((k) => ENCOUNTERS[e.id].roads[k].kind === "people") || null;
+// What each synergy does, inside the path that prices the card it rides: every one is a handful of ordinary fx, so the
+// preview (choose on a copy), canWork (working on a copy) and checkEnd see exactly what the play will.
+const SYN_FX = {
+  unfiled(s, ctx, notes) {
+    const e = s.asc.enc;
+    (e.strike = e.strike || []).push(e.next);
+    s.asc.charges.glass--;
+    applyFx(s, { longing: 1 }, notes);
+    telegraph(s, e);
+  },
+  throne(s, ctx, notes) {
+    if (ctx.finish) return applyFx(s, { apo: 1 }, notes);
+    s.asc.charges.halo--;
+    s.asc.syn.ease = 1;
+    applyFx(s, { apo: -1 }, notes);
+  },
+  witness(s, ctx, notes) {
+    const e = s.asc.enc;
+    const b = witnessBond(s);
+    const road = synHost.people(e);
+    e.roads[road] = Math.min(e.need[road], e.roads[road] + 1);
+    s.asc.syn.witnessed.push(b);
+  },
+  revelation(s) {
+    s.asc.syn.laid = "revelation";
+  },
+  countermeasure(s, ctx, notes) {
+    const e = s.asc.enc;
+    if (e) {
+      e.pattern = null;
+      for (const [k, was] of liftable(e)) e.mods[k] = was;
+    } else applyFx(s, { mark: -1 }, notes);
+    applyFx(s, { strain: 1 }, notes);
+  },
+  hand(s, ctx) {
+    const e = s.asc.enc;
+    const road = synHost.people(e);
+    e.roads[road] = Math.min(e.need[road], e.roads[road] + 1);
+  },
+  velvet(s, ctx, notes) {
+    applyFx(s, { clock: -1, strain: 1, longing: 1 }, notes);
+  },
+};
+// Fire the hook's synergies in table order, each re-asked just before it fires (an earlier one can change what a later
+// one needs), each at most once. The limit is spent, the count kept, and the toast names the synergy.
+function synFire(s, hook, ctx, notes) {
+  if (!s.asc || !s.asc.syn) return;
+  for (const x of SYNERGIES) {
+    if (x.hook !== hook || !x.needs(s, ctx)) continue;
+    const key = limitKey(s, x);
+    SYN_FX[x.id](s, ctx, notes);
+    if (key && x.limit !== "none") s.asc.syn.used[key] = true;
+    s.asc.syn.fired[x.id] = (s.asc.syn.fired[x.id] || 0) + 1;
+    notes.push(`${x.name}: ${x.note}`);
+  }
 }
 
 function startEnc(s, id) {
@@ -1709,6 +1957,8 @@ function startEnc(s, id) {
     id, phase: 0, clock: 0, roads: {}, need: {}, intent: null, next: null, turn: 0, mods: {},
     pattern: null, patternAt: -1, sealNext: false, sealed: null, resolve: null, done: null, spoils: false, auditing: false, counter: null,
   };
+  // A run with synergies numbers its fights: the id persists with the save, and a once-a-fight limit is kept against it.
+  if (a.syn) e.uid = ++a.syn.seq;
   // People roads start with a pip if you've freed any of the Named; under No Sanctuary (Edict 7) they start empty.
   // Judgement (arcana.js), once, on the next adversary: upright the Named answer, two pips more; reversed nobody
   // rises, and its people road starts empty.
@@ -1737,6 +1987,23 @@ function startEnc(s, id) {
     Object.assign(e.mods, k.mods || {});
     if (k.clock) e.clock = Math.max(0, e.clock + k.clock);
     if (k.cage) s.cage = Math.max(0, s.cage + k.cage);
+  }
+  // The Empty Throne, stopped: the fight after it begins a step later.
+  if (a.syn && a.syn.ease > 0) {
+    if (!def.clock.key) e.clock = clamp(e.clock - a.syn.ease, 0, def.clock.max - 1);
+    a.syn.ease = 0;
+  }
+  // Strategic preparation (prep.js): what the Hour readied lands on its own adversary, once; on any other it is gone.
+  const p = a.syn && a.syn.prep;
+  if (p) {
+    const r = p.ready;
+    p.ready = null;
+    const log = (p.log[id] ||= { did: null, won: false });
+    if (r && r.enc === id) {
+      if (r.kind === "read") e.read = true;
+      else if (r.strike.length) e.strike = [...new Set([...(e.strike || []), ...r.strike])];
+      log.did = r.kind;
+    }
   }
   telegraph(s, e);
   if (def.phases[0].open) s.forced.unshift(def.phases[0].open);
@@ -1769,6 +2036,7 @@ function resolveEnc(s, k, notes, finish = false, spoils = false) {
   const road = def.roads[k];
   a.enc = null;
   a.met.push({ id: e.id, out: k, finished: !!finish });
+  if (a.syn && a.syn.prep && a.syn.prep.log[e.id]) a.syn.prep.log[e.id].won = !!(road || k === "unfiled");
   if (out.text) notes.push(`${out.title}. ${out.text}`);
   // A road pays by its kind (ascension.js PAY); finishing it pays that twice. Disengaging pays in knowing what you
   // walked away from; being driven out costs Mark, and the next fight starts higher. Neither exit's own price ends the
@@ -1803,8 +2071,11 @@ function resolveEnc(s, k, notes, finish = false, spoils = false) {
   // the Grammar to the Festival (by force, first, if you cut it); the Festival to the Oldest Trap.
   // With both ways through order still sealed, the Warrens open straight onto the almoner's crossroads.
   const routes = ORDER_ROADS.every((r) => a.locked.includes(r)) ? "a_cross" : "a_routes";
-  if (e.id === "inquisition") s.forced.push("a_camp", ...a.pending.splice(0), routes);
-  else if (def.act === 2) s.forced.push("a_camp", ...a.pending.splice(0));
+  // The Spoils (prep.js), a choice in place of the relic alone, before the chapel. Queued on the won fight and judged
+  // when dealt (draw() skips them without two sides to take): the fight's night can change what the run can pay.
+  const sp = a.spoils && a.syn && a.syn.prep && a.syn.prep.spoils < 2 && !s.forced.includes("d_spoils") ? ["d_spoils"] : [];
+  if (e.id === "inquisition") s.forced.push(...sp, "a_camp", ...a.pending.splice(0), routes);
+  else if (def.act === 2) s.forced.push(...sp, "a_camp", ...a.pending.splice(0));
   else if (e.id === "grammar") {
     startEnc(s, "festival");
     applyFx(s, { mark: -1 }, notes);
@@ -1851,14 +2122,30 @@ function ascTurn(s, card, ch, side, roll, before, encBefore, notes) {
   if (card.stop && e.done) {
     const k = e.done;
     const snap = { clock: encClock(s), roads: { ...e.roads } };
-    resolveEnc(s, k, notes, !!(ch.fx && ch.fx.finish), true);
+    const finish = !!(ch.fx && ch.fx.finish);
+    resolveEnc(s, k, notes, finish, true);
+    synFire(s, "stop", { finish }, notes);
     return { intent: null, answered: false, resolved: k, snap };
   }
   if (card.enc !== e.id) return null;
+  if (card.id === BOND_CARD.id) {
+    const offer = bondOffer(s);
+    if (!offer || !spend(s, offer.bond, notes, offer.slip)) return null;
+    s.flags[`seen_bond_${offer.bond}`] = true;
+    s.flags[`resolved_bond_${e.id}`] = true;
+    const snap = { clock: encClock(s), roads: { ...e.roads, [offer.road]: e.need[offer.road] } };
+    resolveEnc(s, offer.road, notes, false, true);
+    synFire(s, "stop", { finish: false }, notes);
+    return { intent: null, answered: false, resolved: offer.road, snap };
+  }
   const def = ENCOUNTERS[e.id];
   const out = { intent: e.intent, answered: false };
   if (e.turn === 0 && a.occ && a.occ.debts.length) collect(s, notes); // the Seven collect as the fight opens (occult.js)
-  if (e.sealed === side) applyFx(s, { strain: 2 }, notes), notes.push("You break the seal.");
+  if (e.sealed === side) {
+    // Breaking a seal: the price, or, for a run with the Depth Pass whose Mask is Eris, the Velvet Intervention's price in its place.
+    if (synergiesFor(s, "seal").length) synFire(s, "seal", {}, notes), notes.push("You break the seal.");
+    else applyFx(s, { strain: 2 }, notes), notes.push("You break the seal.");
+  }
   e.sealed = null;
   const it = e.intent && INTENTS[e.intent];
   if (it) {
@@ -1881,6 +2168,7 @@ function ascTurn(s, card, ch, side, roll, before, encBefore, notes) {
       notes.push(`You pressed on while it landed: ${def.roads[gained[0]].label} +1.`);
     }
   }
+  if (out.refused) synFire(s, "refuse", {}, notes);
   e.intent = null;
   e.turn++;
   out.snap = { clock: encClock(s), roads: { ...e.roads } };
@@ -1926,6 +2214,7 @@ function ascTurn(s, card, ch, side, roll, before, encBefore, notes) {
     if (def.phases[to].open) s.forced.unshift(def.phases[to].open);
   }
   telegraph(s, e);
+  if (bondOffer(s)) s.forced.unshift(BOND_CARD.id);
   return out;
 }
 
@@ -2021,6 +2310,7 @@ function encWrap(s, c) {
 export function canWork(s, k) {
   const a = s.asc;
   if (!a || s.over || !a.relics.includes(k)) return { ok: false, why: "" };
+  if (s.cardId === BOND_CARD.id) return { ok: false, why: "Answer the offer of help first." };
   if (inVessel(s, k)) return { ok: false, why: "In the vessel until the second chapel." };
   const stone = isStone(s, k);
   if (!(a.charges[k] > 0)) return { ok: false, why: stone ? "A Stone works once, and this one has." : "Used up. A chapel's Prepare readies your relics again." };
@@ -2187,6 +2477,7 @@ function working(s, k, notes) {
   workFx(s, k, notes);
   // The Magician reversed (arcana.js): the tools turn on their worker.
   if (s.arc && arcOn(s, "magician") === "rev") applyFx(s, { strain: 1 }, notes), notes.push("The Magician, reversed: Strain +1.");
+  synFire(s, "work", { k }, notes);
 }
 export function work(s, k) {
   const can = canWork(s, k);
@@ -2195,6 +2486,7 @@ export function work(s, k) {
 }
 export function canTransmute(s, k) {
   if (!s.asc || s.over || !s.asc.relics.includes(k)) return { ok: false, why: "" };
+  if (s.cardId === BOND_CARD.id) return { ok: false, why: "Answer the offer of help first." };
   if (inVessel(s, k)) return { ok: false, why: "In the vessel until the second chapel." };
   if (s.asc.armed) return { ok: false, why: "A working is already laid on this card." };
   return { ok: true, why: "" };
@@ -2291,15 +2583,18 @@ export function parseChallenge(hash, today) {
 // Exodus dares (2026-10-17): the same road for a friend. Only a short seed travels (ascension-<8 base36>); a road
 // begun before short seeds shares as a plain link. The link carries the Edict and how far the sender got.
 const ROAD_SEED = /^ascension-([0-9a-z]{8})$/;
+export const exodusRules = (s) => s.asc && s.asc.syn ? (s.asc.syn.v === 2 || s.asc.syn.v === 3 ? s.asc.syn.v : 1) : 0;
 export function exodusHash(s) {
   const m = s.asc && ROAD_SEED.exec(s.seedLabel);
-  return m ? `exodus-${m[1]}-e${s.asc.edict}-a${s.asc.act}` + (s.over ? `-${s.over}` : "") : "";
+  const version = exodusRules(s);
+  return m ? `exodus-${m[1]}-e${s.asc.edict}-a${s.asc.act}` + (version ? `-d${version}` : "") + (s.over ? `-${s.over}` : "") : "";
 }
 export function parseExodus(hash) {
-  const m = /^#?exodus-([0-9a-z]{8})-e(\d{1,2})-a([123])(?:-([a-z_]+))?$/.exec(String(hash || ""));
-  if (!m || +m[2] > MAX_EDICT) return null;
-  const ending = m[4] && Object.prototype.hasOwnProperty.call(ENDINGS, m[4]) ? m[4] : null;
-  return { seed: `ascension-${m[1]}`, edict: +m[2], act: +m[3], ending };
+  const m = /^#?exodus-([0-9a-z]{8})-e(\d{1,2})-a([123])(?:-d(\d))?(?:-([a-z_]+))?$/.exec(String(hash || ""));
+  if (!m || +m[2] > MAX_EDICT || (m[4] !== undefined && !["1", "2", "3"].includes(m[4]))) return null;
+  const ending = m[5] && Object.prototype.hasOwnProperty.call(ENDINGS, m[5]) ? m[5] : null;
+  // A bare link replays the pre-Depth rules. -d1, -d2 and -d3 keep their own preparation and encounter rules.
+  return { seed: `ascension-${m[1]}`, edict: +m[2], act: +m[3], ending, ...(m[4] ? { depth: Number(m[4]) } : {}) };
 }
 // Each fight, by how it ended: a road out, a disengage, driven out; and one the run ended inside.
 const fightGrid = (s) => s.asc.met.map((m) => (m.out === "fled" ? "🌫️" : m.out === "driven" ? "🩸" : "🗝️")).join("") + (s.over && s.asc.enc && s.asc.enc.turn > 0 ? "⬛" : "");

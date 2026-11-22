@@ -254,6 +254,8 @@ body.reckoning .seal i.on{opacity:.1}
 body.asc #app{--chrome:622px}
 /* A fight adds a row to the panel and a second line to each choice: the card gives up exactly that much. */
 body.asc.fight #app{--chrome:652px;--card-min:140px}
+/* A dusk or road card whose choices carry a second line (prep.js) gives up the same height a fight's choices do. */
+body.asc.tagged #app{--chrome:652px;--card-min:140px}
 /* The intent is the adversary's, not the card's: a banner across the head of the stage that stays put while the card
    is thrown, wider than a fight's narrow card. */
 .stage .intent{position:absolute;z-index:3;top:8px;left:50%;transform:translateX(-50%);width:min(300px,100%);text-align:center;
@@ -286,6 +288,7 @@ body.asc.fight #app{--chrome:652px;--card-min:140px}
 #art.rev .face{transform:rotate(180deg)}
 .bell.held{opacity:.25}
 .choices .tag{display:block;margin-top:3px;font-family:var(--f-inscr);font-size:9.5px;letter-spacing:.12em;color:var(--veil-mute);text-transform:uppercase;line-height:1.15}
+.choices .tag .intel{display:block;margin-top:2px;font-style:normal;text-transform:none;letter-spacing:.02em;font-family:var(--f-body);font-size:10px;line-height:1.2}
 .choices button.answers .tag{color:var(--gold)}
 .choices button.answers{border-color:color-mix(in srgb, var(--gold) 55%, transparent)}
 .choices button.sealed .tag{color:var(--alert)}
@@ -475,6 +478,7 @@ textarea.copy{width:100%;min-height:120px;background:var(--plum);color:var(--vei
   .card .tier{font-size:13px}
   body.asc #app{--chrome:470px}
   body.asc.fight #app{--chrome:500px;--card-min:140px}
+  body.asc.tagged #app{--chrome:500px;--card-min:140px}
   .stage .intent{padding:3px 8px 4px;top:6px}
   .stage .intent b{font-size:10px}
   .stage .intent span{font-size:10.5px}
@@ -499,6 +503,7 @@ textarea.copy{width:100%;min-height:120px;background:var(--plum);color:var(--vei
      shortest phone still gets the whole board without a scroll. */
   body.asc #app{--chrome:470px;--card-min:130px}
   body.asc.fight #app{--chrome:500px;--card-min:110px}
+  body.asc.tagged #app{--chrome:500px;--card-min:110px}
 }
 /* The occult expansion (occult.js, 2026-10-26). Two ways, neither of them gold (the false sun's), alert red, or bone
    (genuine freedom's): neither is drawn as the good one. Both read at 6:1 or better on Lux Black and Deep Plum. Every

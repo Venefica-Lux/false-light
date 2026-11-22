@@ -4,14 +4,16 @@ import { POLISHED_LOOPS, loopFadeCurve, loopDue } from "./audio-loops.js";
 import { lockAxis, pushSample, releaseVelocity, decide } from "./swipe.js";
 import {
   newGame, choose, preview, switchMask, maskCost, maskStrain, tutorialPending, currentCard, shareText, vigilCardLine, vigilNumber, nightsSurvived,
-  cardCosts, resolveStir, endCause, parseChallenge, parseExodus, isWin, bondsEarned, migrate, LAUNCH_DAY, CARDS, METERS, MASKS, LIGHT, ENDINGS, STAT_LABEL, STATS, CARDS_PER_DAY, BONDS,
+  cardCosts, resolveStir, endCause, parseChallenge, parseExodus, exodusRules, isWin, bondsEarned, migrate, LAUNCH_DAY, CARDS, METERS, MASKS, LIGHT, ENDINGS, STAT_LABEL, STATS, CARDS_PER_DAY, BONDS,
   work, canWork, transmute, canTransmute, encClock, encBestRoad, ENCOUNTERS, INTENTS, RELICS, ROADS, ACTS, VERBS, UNLOCKS, EDICTS, MAX_EDICT, pullAt, bareAt,
-  skyToday, canRefuse, refuse, relicPrice, canCorrespond, correspond, canVessel, vessel,
+  skyToday, canRefuse, refuse, relicPrice, canCorrespond, correspond, canVessel, vessel, synergiesFor,
 } from "./engine.js";
 import {
   SPHERES, LADDER, MEANS, RITES, ACCOUNTS, PATHS, TRACK_WORD, STONES, ORBIT, occOf, occDay, pathOf, shownTrack, sphereName, riteOn, occReading, inVessel, isStone,
   hourOf, gatesPassed,
 } from "./occult.js";
+import { RECIPES, RIT_STATES, ritRecord, ritBook, ritEntry } from "./ritual.js";
+import { PREPS, PREP_STATES, prepRecord, prepBook, prepEntry } from "./prep.js";
 import { ARCANA, ARCANA_PLANNED, SIGNS, PLANETS, PLACES, DIGNITY_WORD, cardTitle, cardLine, rulerName } from "./arcana.js";
 
 // OWNER DECISION: canonical public URLs. PLAY_URL is where shared links point when the page can't see its
@@ -91,7 +93,7 @@ const META0 = { endings: {}, best: 0, plays: 0, crowns: 0, tutorialDone: false, 
 const occRecord = (o) => {
   const x = o && typeof o === "object" && !Array.isArray(o) ? o : {};
   const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
-  return { gates: obj(x.gates), paths: obj(x.paths) };
+  return { gates: obj(x.gates), paths: obj(x.paths), rit: ritRecord(x.rit), prep: prepRecord(x.prep) };
 };
 // Saved metadata outlives releases too: missing or mistyped fields take their defaults, nothing present is lost.
 function loadMeta() {
@@ -986,6 +988,10 @@ function renderHud(view = null) {
   document.body.dataset.adversary = fight ? fight.id : "";
   document.body.classList.toggle("asc", s.mode === "ascension");
   document.body.classList.toggle("fight", !!fight);
+  // A dusk or road card whose choices carry a second line (prep.js: the Hour's and the Spoils' prices, route intel):
+  // the card gives up that line's height, as a fight's does, so the screen never scrolls.
+  const cc = !s.over ? currentCard(s) : null;
+  document.body.classList.toggle("tagged", !fight && !!cc && (["d_hour", "d_spoils"].includes(cc.id) || !!cc.intel));
   renderRelics(s);
   renderEnc(s);
   $("bell").querySelectorAll("i").forEach((i, n) => i.classList.toggle("on", n < s.bell));
@@ -1081,11 +1087,11 @@ function refreshChoices() {
     b.classList.toggle("kept", !!p.kept);
     const tag = b.querySelector(".tag");
     if (tag) {
-      tag.innerHTML = choiceTag(p, c[side]);
+      tag.innerHTML = choiceTag(p, c[side]) + (c.intel && c.intel[side] ? `<i class="intel">${esc(c.intel.brief[side])}</i>` : "");
       tag.hidden = !tag.innerHTML;
     }
     b.title = p.lethal ? "Can end your run" : p.crown ? "Can win the run" : "";
-    b.setAttribute("aria-label", (c[side].verb ? VERBS[c[side].verb] + ": " : "") + c[side].label + spokenPreview(p));
+    b.setAttribute("aria-label", (c[side].verb ? VERBS[c[side].verb] + ": " : "") + c[side].label + spokenPreview(p) + (c.intel && c.intel[side] ? `. ${c.intel[side]}` : ""));
   }
 }
 // What the lit vials and the odds line show a sighted player, said in the choice's name: which meters and tracks
@@ -1626,7 +1632,9 @@ function renderEnc(s) {
   $("intent").hidden = !it;
   if (it) {
     const nx = live.next && INTENTS[live.next];
-    $("intent").innerHTML = `<b>▲ ${esc(it.name)}</b><span>Unless stopped: ${esc(saysOf(run, it))}</span>${nx ? `<i>Next intended: ${esc(nx.name)}</i>` : ""}`;
+    // A Read readied at a chapel (prep.js): the intent after next, labelled likely (a fight card can re-pick it).
+    const n2 = live.read && live.next2 && INTENTS[live.next2];
+    $("intent").innerHTML = `<b>▲ ${esc(it.name)}</b><span>Unless stopped: ${esc(saysOf(run, it))}</span>${nx ? `<i>Next intended: ${esc(nx.name)}</i>` : ""}${n2 ? `<i>Then, likely: ${esc(n2.name)}</i>` : ""}`;
   }
   if (!fight) return;
   const def = ENCOUNTERS[e.id];
@@ -1661,7 +1669,7 @@ function choiceTag(p, ch = null) {
   if (!p.enc || !e) return ch && ch.tag ? esc(ch.tag) : "";
   const def = ENCOUNTERS[e.id];
   const it = e.intent && INTENTS[e.intent];
-  const bits = [];
+  const bits = ch && ch.tag ? [ch.tag] : [];
   if (p.enc.sealed) bits.push("🔒 +2 strain");
   if (p.enc.verb === "flee") bits.push("disengage");
   else if (it) bits.push(p.enc.answers ? "✓ stops it" : p.enc.refuses ? "✗ refuses it" : "intent lands");
@@ -1737,7 +1745,7 @@ function refuseButton(s) {
   const can = canRefuse(s);
   const on = !!o.refuse;
   const rc = on ? "laid on this card" : can.ok ? (can.kind === "gate" ? "storm the gate" : "refuse the intent") : "not on this card";
-  return `<button class="relic refuse${on ? " armed" : ""}${can.ok || on ? "" : " spent"}" id="r-refuse" type="button" aria-pressed="${on}" aria-label="Refuse: ${on ? "laid on this card. Tap to lift it." : can.ok ? (can.kind === "gate" ? "storm today's gate, Strain +1 and Mark +1." : "the side that doesn't answer refuses the intent, Mark +1.") : esc(can.why || "nothing to refuse on this card.")}">${svg("serpent", 5)}<span><span class="rn">Refuse</span><span class="rc">${esc(rc)}</span></span></button>`;
+  return `<button class="relic refuse${on ? " armed" : ""}${can.ok || on ? "" : " spent"}" id="r-refuse" type="button" aria-pressed="${on}" aria-label="Refuse: ${on ? "laid on this card. Tap to lift it." : can.ok ? (can.kind === "gate" ? "storm today's gate, Strain +1 and Mark +1." : "the side that doesn't answer refuses the intent, Mark +1." + (synergiesFor(s, "refuse").length ? " A Bond you hold will witness it: the people road +1." : "")) : esc(can.why || "nothing to refuse on this card.")}">${svg("serpent", 5)}<span><span class="rn">Refuse</span><span class="rc">${esc(rc)}</span></span></button>`;
 }
 // One side's odds and flags as they'd be with the working laid on (played out on a copy).
 function sideWith(s, side) {
@@ -1809,6 +1817,8 @@ async function relicSheet(k) {
     const t = JSON.parse(JSON.stringify(run));
     work(t, k);
     if (!t.over) lines = `<p class="fine">With it, this card: ◀ ${sideWith(t, "left")}<br>▶ ${sideWith(t, "right")}</p>`;
+    // The Depth Pass (synergy.js): what holding this with the rest would also do, said before it is paid.
+    for (const x of synergiesFor(run, "work", { k })) lines += `<p class="fine"><b>${esc(x.name)}.</b> ${esc(x.line)}</p>`;
   }
   const tc = transmute(JSON.parse(JSON.stringify(run)), k);
   const v = await overlay(
@@ -1901,6 +1911,31 @@ function sevenCodex() {
   const paths = Object.entries(meta.asc.occ.paths).map(([k, n]) => `${PATHS[k] || k} ×${n}`).join(" · ");
   return `<div class="eyebrow">The Seven</div>${rows}${paths ? `<div><h4>The ways walked</h4><p>${esc(paths)}</p></div>` : ""}`;
 }
+// The Crypt Stair workbench (ritual.js), as the codex has learned it. Five states per recipe: undiscovered,
+// encountered, partial, performed, fully documented. Knowledge, never power.
+const RIT_LABEL = { undiscovered: "Undiscovered", encountered: "Encountered", partial: "Partly worked", performed: "Performed", documented: "Fully documented" };
+function ritCodex() {
+  const rec = meta.asc.occ.rit || {};
+  const rows = RECIPES.map((r) => {
+    const x = ritEntry(r, rec[r.id]);
+    const dim = RIT_STATES.indexOf(x.state) < 3 ? ' class="locked"' : "";
+    const body = x.state === "undiscovered" ? esc(r.hint) : [x.clue ? `<i>${esc(x.clue)}</i>` : "", x.needs.length ? `Needs ${x.needs.map(esc).join("; ")}.` : "", ...x.lines.map(esc)].filter(Boolean).join(" ");
+    return `<div${dim}><h4>${esc(x.name)} · ${RIT_LABEL[x.state]}</h4><p>${body}</p></div>`;
+  }).join("");
+  return `<div class="eyebrow">The Workbench</div>${rows}`;
+}
+// Strategic preparation (prep.js), as the codex has learned it: per keeper, not met, met, prepared, prepared and won.
+const PREP_LABEL = { unmet: "Not met", met: "Met", prepared: "Prepared for", won: "Prepared for, and beaten" };
+function prepCodex() {
+  const rec = meta.asc.occ.prep || {};
+  const rows = Object.keys(PREPS).map((adv) => {
+    const x = prepEntry(adv, rec[adv]);
+    const dim = PREP_STATES.indexOf(x.state) < 2 ? ' class="locked"' : "";
+    const body = x.lines.length ? x.lines.map(esc).join(" ") : "A Prepare night at a chapel buys an hour against the next one.";
+    return `<div${dim}><h4>${esc(x.name)} · ${PREP_LABEL[x.state]}</h4><p>${body}</p></div>`;
+  }).join("");
+  return `<div class="eyebrow">Preparation</div>${rows}`;
+}
 // What you've learned about the adversaries, in canon's own terms (§13): detection, danger, counter, impact.
 // Knowledge, never power. Unmet ones show only where they wait.
 function codex() {
@@ -1921,7 +1956,7 @@ function codex() {
   const shut = sealed().map((k) => `<div class="locked"><h4>${UNLOCKS[k].kind === "road" ? "A road" : "A relic"}, sealed</h4><p>${esc(UNLOCKS[k].hint)}</p></div>`).join("");
   const line = meta.asc.lineage.length ? `<div class="eyebrow">Your line</div>${meta.asc.lineage.slice().reverse().map((x) => `<div${x.won ? "" : ' class="locked"'}><h4>${esc(x.n)} · ${esc(x.by)}</h4><p>${esc(ACTS[x.act] ? ACTS[x.act].name : "")}${x.edict ? ` · Edict ${roman(x.edict)}` : ""}${x.won ? " · got out" : ""}</p></div>`).join("")}` : "";
   const eds = EDICTS.slice(1).map((e, i) => (i < meta.asc.edict ? `<div><h4>Edict ${roman(i + 1)} · ${esc(e.name)}</h4><p>${esc(e.text)}</p></div>` : i === meta.asc.edict ? `<div class="locked"><h4>Edict ${roman(i + 1)}, sealed</h4><p>Walk a Way Out under ${i ? `Edict ${roman(i)}` : "no Edict"}.</p></div>` : "")).join("");
-  return overlay(`<div class="eyebrow">Adversaries · Exodus</div><div class="gallery">${rows}${shut ? `<div class="eyebrow">Still sealed</div>${shut}` : ""}${sevenCodex()}<div class="eyebrow">Edicts</div>${eds}${line}</div><button class="btn ghost" data-v="ok" type="button">Close</button>`, { dismiss: false });
+  return overlay(`<div class="eyebrow">Adversaries · Exodus</div><div class="gallery">${rows}${shut ? `<div class="eyebrow">Still sealed</div>${shut}` : ""}${sevenCodex()}${ritCodex()}${prepCodex()}<div class="eyebrow">Edicts</div>${eds}${line}</div><button class="btn ghost" data-v="ok" type="button">Close</button>`, { dismiss: false });
 }
 
 // ---------- endings ----------
@@ -1958,6 +1993,8 @@ function record() {
       }
       const path = pathOf(s);
       meta.asc.occ.paths[path] = (meta.asc.occ.paths[path] || 0) + 1;
+      meta.asc.occ.rit = ritBook(meta.asc.occ.rit, s.asc.syn && s.asc.syn.rit);
+      meta.asc.occ.prep = prepBook(meta.asc.occ.prep, s.asc.syn && s.asc.syn.prep);
     }
     if (s.asc.self) {
       meta.asc.lineage.push({ n: s.asc.self, by: e.title, end: s.over, act: s.asc.act, edict: s.asc.edict, won: !!e.win });
@@ -2444,7 +2481,7 @@ async function start(mode, date = todayISO(), { late = false, dare = null } = {}
     // Its own slot: an Endless run or a Vigil in progress stays where it is.
     if (run && run.mode !== "ascension") reg = run;
     // A friend's road: the same seed at their Edict, with the whole map open (theirs may be bigger than yours).
-    if (dare && ascRun && ascRun.seedLabel !== dare.seed) {
+    if (dare && ascRun && (ascRun.seedLabel !== dare.seed || ascRun.asc.edict !== dare.edict || exodusRules(ascRun) !== (dare.depth || 0))) {
       const v = await overlay(`<div class="eyebrow">Abandon this Exodus?</div><p class="line">Walking their road ends yours, in ${esc(ACTS[ascRun.asc.act].name)}.</p><div class="row"><button class="btn primary" data-v="cancel" type="button">Keep mine</button><button class="btn" data-v="abandon" type="button">Walk theirs</button></div>`, { dismiss: false });
       if (v !== "abandon") return goHome();
       ascRun = null;
@@ -2453,7 +2490,7 @@ async function start(mode, date = todayISO(), { late = false, dare = null } = {}
     if (!ascRun) {
       const prev = meta.asc.lineage[meta.asc.lineage.length - 1] || null;
       if (dare) {
-        ascRun = newGame({ seed: dare.seed, mode, tutorial: !meta.tutorialDone, locked: [], edict: dare.edict, prev });
+        ascRun = newGame({ seed: dare.seed, mode, tutorial: !meta.tutorialDone, locked: [], edict: dare.edict, depth: dare.depth || false, prev });
         ascRun.asc.dare = { act: dare.act, ending: dare.ending, edict: dare.edict };
       } else {
         const edict = await pickEdict();
