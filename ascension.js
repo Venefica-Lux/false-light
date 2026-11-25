@@ -514,7 +514,7 @@ export function encBestRoad(s) {
 }
 
 // One offer per relationship. It resolves an existing road and spends the existing emergency catch.
-const BOND_ARCS = {
+export const BOND_ARCS = {
   inquisition: {
     bond: "sister", road: "light", who: "The Sister",
     text: "The clerk wants a quiet witness. The Sister has a copy of your statement. She can read it aloud, but she won't be able to hide you after.",
