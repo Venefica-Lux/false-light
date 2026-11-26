@@ -4,7 +4,7 @@ import { POLISHED_LOOPS, loopFadeCurve, loopDue } from "./audio-loops.js";
 import { lockAxis, pushSample, releaseVelocity, decide } from "./swipe.js";
 import {
   newGame, choose, preview, switchMask, maskCost, maskStrain, tutorialPending, currentCard, shareText, vigilCardLine, vigilNumber, nightsSurvived,
-  cardCosts, resolveStir, endCause, parseChallenge, parseExodus, exodusRules, isWin, bondsEarned, migrate, LAUNCH_DAY, CARDS, METERS, MASKS, LIGHT, ENDINGS, STAT_LABEL, STATS, CARDS_PER_DAY, BONDS,
+  cardCosts, resolveStir, endCause, parseChallenge, parseExodus, exodusRules, isWin, bondsEarned, migrate, LAUNCH_DAY, CARDS, METERS, MASKS, VENEFICA, maskOf, uniOn, canUnify, unify, LIGHT, ENDINGS, STAT_LABEL, STATS, CARDS_PER_DAY, BONDS,
   work, canWork, transmute, canTransmute, encClock, encBestRoad, ENCOUNTERS, INTENTS, RELICS, ROADS, ACTS, VERBS, UNLOCKS, EDICTS, MAX_EDICT, pullAt, bareAt,
   skyToday, canRefuse, refuse, relicPrice, canCorrespond, correspond, canVessel, vessel, synergiesFor, BRD_PLACES, BRD_PEOPLE, BRD_THREADS, brdEpilogue,
 } from "./engine.js";
@@ -692,13 +692,15 @@ const encMood = (s) => {
   const k = e && `enc_${e.id}_${e.phase}`;
   return k && MOOD_TRACK[k] ? k : null;
 };
-const runMood = (s) =>
-  s.communion > 0 ? "light"
-  : s.reckoning > 0 || s.cardId === "reckoning" ? "reckoning"
-  : encMood(s) ? encMood(s)
-  : s.maskLocked && MASKS[s.mask].seized ? "seized_" + s.mask
-  : s.cascade ? "cascade"
-  : MASKS[s.mask].seized ? "worn_" + s.mask : "warrens";
+const runMood = (s) => {
+  const m = maskOf(s.mask);
+  return s.communion > 0 ? "light"
+    : s.reckoning > 0 || s.cardId === "reckoning" ? "reckoning"
+    : encMood(s) ? encMood(s)
+    : s.maskLocked && m && m.seized ? "seized_" + s.mask
+    : s.cascade ? "cascade"
+    : m && m.seized ? "worn_" + s.mask : "warrens";
+};
 
 // ---------- the Masks' figures, for the procedural score ----------
 // The tracks carry each Mask's own music. When the fallback plays instead, each Mask worn gets a figure on top of
@@ -1036,18 +1038,43 @@ function renderHud(view = null) {
   for (const k of Object.keys(MASKS)) {
     const b = $("k-" + k);
     const c = maskStrain(s, k);
+    const active = s.mask === k || (s.mask === "venefica" && k !== "bare");
     b.classList.toggle("on", s.mask === k);
-    b.setAttribute("aria-pressed", String(s.mask === k));
+    b.classList.toggle("unified-part", s.mask === "venefica" && k !== "bare");
+    b.setAttribute("aria-pressed", String(active));
     b.classList.toggle("locked", s.maskLocked && s.mask !== k);
-    b.querySelector(".cost").textContent = s.mask === k ? (s.maskLocked ? "seized" : "worn") : c ? `+${c} strain` : "free";
-    const state = s.mask === k ? (s.maskLocked ? "seized, worn" : "worn") : c ? `wear it for ${c} Strain` : "wear it free";
+    b.querySelector(".cost").textContent = s.mask === k ? (s.maskLocked ? "seized" : "worn") : (s.mask === "venefica" && k !== "bare") ? "united" : c ? `+${c} strain` : "free";
+    const state = s.mask === k ? (s.maskLocked ? "seized, worn" : "worn") : (s.mask === "venefica" && k !== "bare") ? `united in ${VENEFICA.name}` : c ? `wear it for ${c} Strain` : "wear it free";
     b.setAttribute("aria-label", `${MASKS[k].name}: ${state}. Hold for what it does.`);
   }
-  const m = MASKS[s.mask];
+  const vbar = $("venefica-bar");
+  if (vbar) {
+    const showUni = uniOn(s) && !s.over && (s.asc.uni.unlocked || s.mask === "venefica");
+    vbar.hidden = !showUni;
+    if (showUni) {
+      if (s.mask === "venefica") {
+        vbar.innerHTML = `<span class="venefica-status on">✦ ${esc(VENEFICA.name)} · unified (Nyx · Eris · Lilith)</span>`;
+      } else {
+        const gate = canUnify(s);
+        if (gate.ok) {
+          const lbl = gate.reunify ? "Reunify · Lux Venefica" : "Unify · Lux Venefica";
+          const costLbl = gate.cost ? `+${gate.cost} strain` : "free";
+          vbar.innerHTML = `<button class="venefica-btn" id="b-unify" type="button">✦ ${lbl} · <span>${costLbl}</span></button>`;
+          $("b-unify").onclick = () => onUnify();
+        } else {
+          vbar.innerHTML = `<span class="venefica-status">✦ ${esc(VENEFICA.name)} · ${esc(gate.reason)}</span>`;
+        }
+      }
+    } else {
+      vbar.innerHTML = "";
+    }
+  }
+  const m = maskOf(s.mask);
   $("maskline").textContent = s.maskLocked
     ? `Seized by ${m.name} until nightfall · breaking free costs +${maskStrain(s, s.mask === "bare" ? "nyx" : "bare")} Strain`
     : `${m.name}: ${m.bonus} · ${m.risk}`;
   $("app").classList.toggle("seized", !!s.maskLocked);
+  document.body.classList.toggle("unified", s.mask === "venefica");
   for (const k of Object.keys(MASKS)) document.body.classList.toggle("seized-" + k, !!s.maskLocked && s.mask === k);
   setSeal(s.mask);
   document.body.classList.toggle("communion", s.communion > 0);
@@ -1155,6 +1182,7 @@ function spokenPreview(p) {
   if (p.lethal) out.push(`Can end your run, ${pct(p.lethal.p)}`);
   if (p.crown) out.push(`Can win the run, ${pct(p.crown.p)}`); // both, when both: the odds line shows both
   if (p.kept) out.push(`Can end the run seated, ${pct(p.kept.p)}`);
+  if (p.fracture) out.push(`${p.fracture.p >= 0.999 ? "Fractures" : pct(p.fracture.p) + " to fracture"} Lux Venefica into ${p.fracture.masks.map((m) => MASKS[m].name).join(" or ")}`);
   if (moved.length) out.push(`Moves ${list(moved)}`);
   if (p.roll) out.push(`${STAT_LABEL[p.roll.stat]} roll: ${pct(p.roll.hit)} clean, ${pct(p.roll.mid)} at a cost, ${pct(p.roll.miss)} worse`);
   for (const bd of p.bonds || []) out.push(bd.p >= 0.999 ? `Spends ${BONDS[bd.k].name}` : `${pct(bd.p)} to spend ${BONDS[bd.k].name}`);
@@ -1208,6 +1236,7 @@ function oddsLine(p) {
   if (p.lethal) parts.push(`<b class="lethal">${SKULL} ${p.lethal.p >= 0.999 ? lethalText(p.lethal) : pct(p.lethal.p)}</b>`);
   if (p.crown) parts.push(`<b class="crown">${CROWN} ${p.crown.p >= 0.999 ? winName(p.crown) : pct(p.crown.p)}</b>`);
   if (p.kept) parts.push(`<b class="kept">☀ ${p.kept.p >= 0.999 ? esc(ENDINGS[p.kept.endings[0]].title) : pct(p.kept.p)}</b>`);
+  if (p.fracture) parts.push(`<b class="fracture">⚡ ${p.fracture.p >= 0.999 ? `fractures → ${p.fracture.masks.map((m) => esc(MASKS[m].name)).join(" / ")}` : `${pct(p.fracture.p)} fractures`}</b>`);
   for (const b of p.bonds || []) parts.push(`<b class="bondcost">${svg(BOND_ART[b.k], 6)} ${b.p >= 0.999 ? `spends ${BONDS[b.k].name}` : `${pct(b.p)} to spend ${BONDS[b.k].name}`}</b>`);
   if (p.roll) {
     const r = p.roll;
@@ -1255,7 +1284,7 @@ function showPreview(side, strength) {
     if (p.enc.clock) $("t-clock").classList.add("hot");
     for (const k of p.enc.roads) if ($("enc-road-" + k)) $("enc-road-" + k).classList.add("hot");
   }
-  lab.innerHTML = esc(p.label) + (p.lethal ? `<span class="warn">${SKULL} ${p.lethal.p >= 0.999 ? "ends your run" : pct(p.lethal.p) + " to end your run"}</span>` : p.crown ? `<span class="win">${CROWN} ${p.crown.p >= 0.999 ? winName(p.crown) : pct(p.crown.p) + " to win"}</span>` : p.kept ? `<span class="win">☀ ${p.kept.p >= 0.999 ? esc(ENDINGS[p.kept.endings[0]].title) : pct(p.kept.p) + " to end seated"}</span>` : "");
+  lab.innerHTML = esc(p.label) + (p.lethal ? `<span class="warn">${SKULL} ${p.lethal.p >= 0.999 ? "ends your run" : pct(p.lethal.p) + " to end your run"}</span>` : p.crown ? `<span class="win">${CROWN} ${p.crown.p >= 0.999 ? winName(p.crown) : pct(p.crown.p) + " to win"}</span>` : p.kept ? `<span class="win">☀ ${p.kept.p >= 0.999 ? esc(ENDINGS[p.kept.endings[0]].title) : pct(p.kept.p) + " to end seated"}</span>` : p.fracture ? `<span class="fracture">⚡ ${p.fracture.p >= 0.999 ? `fractures → ${p.fracture.masks.map((m) => esc(MASKS[m].name)).join("/")}` : pct(p.fracture.p) + " to fracture"}</span>` : "");
   lab.className = "choice" + (side === "right" ? " r" : "");
   lab.style.opacity = Math.min(1, strength * 1.6);
   $("odds").innerHTML = oddsLine(p);
@@ -1475,6 +1504,7 @@ async function commit(side) {
   renderHud(res.ending ? null : res.board);
   if (res.roll) sfx.dice();
   if (res.notes.some((n) => n.startsWith("Communion"))) sfx.light();
+  if (res.fractured) takeover(res.fractured.mask);
   await slip(res);
   if (res.enc && res.enc.resolved) await encounterEnd(res);
   if (res.ending) return finish(opened);
@@ -1706,7 +1736,40 @@ function setSeal(k) {
 let armedMask = null;
 function disarmMask() {
   armedMask = null;
-  document.querySelectorAll(".mask.arm").forEach((b) => b.classList.remove("arm"));
+  document.querySelectorAll(".mask.arm, .venefica-btn.arm").forEach((b) => b.classList.remove("arm"));
+}
+function onUnify() {
+  if (busy || !run || run.over || run.mask === "venefica" || run.stir) return;
+  const gate = canUnify(run);
+  if (!gate.ok) return toast(gate.reason);
+  const cost = gate.cost;
+  if (cost && armedMask !== "venefica") {
+    disarmMask();
+    armedMask = "venefica";
+    const b = $("b-unify");
+    if (b) {
+      b.classList.add("arm");
+      const ends = unify(JSON.parse(JSON.stringify(run))).ending;
+      b.innerHTML = ends ? `✦ confirm · ${SKULL} +${cost}` : `✦ tap again · +${cost} strain`;
+    }
+    setTimeout(() => {
+      if (armedMask === "venefica") {
+        disarmMask();
+        renderHud();
+      }
+    }, 2600);
+    return;
+  }
+  disarmMask();
+  const r = unify(run);
+  if (!r.ok) return toast(r.reason);
+  buzz(8);
+  saveRun();
+  renderHud();
+  if (r.ending) return finish();
+  refreshChoices();
+  disarm();
+  toast([...(r.notes || []), `${VENEFICA.name}: ${VENEFICA.bonus}. ${VENEFICA.gift}.`].join(" "));
 }
 function onMask(k) {
   if (busy || !run || run.over || run.mask === k || run.stir) return;
@@ -2684,7 +2747,7 @@ const abandonedText = (date) => [`FALSE LIGHT · Vigil #${vigilNumber(date)} · 
 // A road's seed is short enough to send: eight base-36 characters.
 const roadSeed = () => "ascension-" + Array.from({ length: 8 }, () => "0123456789abcdefghijklmnopqrstuvwxyz"[Math.floor(Math.random() * 36)]).join("");
 const sameExodus = (saved, dare) => saved && saved.seedLabel === dare.seed && saved.asc.edict === dare.edict && exodusRules(saved) === (dare.depth || 0);
-const exodusRulesLabel = (version) => version === 4 ? "Breadth Pass" : version ? `Depth Pass ${version}` : "Original rules";
+const exodusRulesLabel = (version) => version === 5 ? "Lux Venefica" : version === 4 ? "Breadth Pass" : version ? `Depth Pass ${version}` : "Original rules";
 async function start(mode, date = todayISO(), { late = false, dare = null } = {}) {
   $("layer").innerHTML = "";
   backdrop();
@@ -2805,8 +2868,8 @@ function howTo() {
 function masksGuide() {
   const sign = (v) => (v < 0 ? "−" : "+") + Math.abs(v);
   const stats = Object.entries(STATS).map(([k, v]) => `${STAT_LABEL[k]} ${sign(v)}`).join(" · ");
-  const rows = Object.entries(MASKS)
-    .map(([k, m]) => `<div class="mrow${run && !run.over && board().mask === k ? " on" : ""}"><div class="mask-key-art" data-mask="${k}" aria-hidden="true">${k === "bare" ? svg("door", 2) : ""}</div><p><b>${m.name}</b> · ${m.bonus}. <b>${m.gift}.</b> <span class="risk">Cost: ${m.risk}.</span>${m.seized ? `<br><span class="risk">When she takes the wheel · ${m.seized}.</span>` : ""}<br>Wear it when ${m.use.charAt(0).toLowerCase()}${m.use.slice(1)}</p></div>`)
+  const rows = [...Object.entries(MASKS), ["venefica", VENEFICA]]
+    .map(([k, m]) => `<div class="mrow${run && !run.over && board().mask === k ? " on" : ""}"><div class="mask-key-art" data-mask="${k}" aria-hidden="true">${k === "bare" ? svg("door", 2) : ""}</div><p><b>${m.name}</b> · ${m.bonus}. <b>${m.gift}.</b> <span class="risk">Cost: ${m.risk}.</span>${m.seized ? `<br><span class="risk">When she takes the wheel · ${m.seized}.</span>` : ""}<br>${k === "venefica" ? m.use : `Wear it when ${m.use.charAt(0).toLowerCase()}${m.use.slice(1)}`}</p></div>`)
     .join("");
   return overlay(
     `<div class="eyebrow">The Masks</div><div class="rules">
@@ -2867,7 +2930,7 @@ function gallery() {
       .sort(([a], [b]) => Number(a) - Number(b))
       .map(([ed, c]) => `${Number(ed) ? `Edict ${roman(Number(ed))}` : "Stock"} ×${c}`);
     if (edicts.length) parts2.push(`<span>Ways Out <b>${edicts.join(", ")}</b></span>`);
-    const masks = Object.entries(MASKS)
+    const masks = [...Object.entries(MASKS), ["venefica", VENEFICA]]
       .filter(([mk]) => (meta.winsByMask[mk] || 0) > 0)
       .map(([mk, m]) => `${m.name.split(" ")[0]} ×${meta.winsByMask[mk]}`);
     if (masks.length) parts2.push(`<span>Masks <b>${masks.join(", ")}</b></span>`);

@@ -64,6 +64,19 @@ export const MASKS = {
     use: "You're after Gnosis. Frequency is reaching people; it starts at −1, your worst. She runs on wanting: with Longing at 3 or more every Gnosis is bigger, and Longing at 3 is also where the Light starts calling and a Mask can take the wheel. Her cards pay Gnosis and turn Strain into it. In the Light she cuts both ways: Communion clears 3 Strain, not 2, and the Reckoning adds 4, not 3.",
   },
 };
+// Lux Venefica: the sovereign union of Nyx, Eris, and Lilith (rules 5). Not a fifth chip on the bar, so MASKS
+// stays at four keys; invoked once all three have answered (or via the Name), and fractured back into a seized
+// Mask by the False Light or any choice that surrenders sovereignty (Cage).
+export const VENEFICA = {
+  name: "Lux Venefica",
+  stat: "all",
+  bonus: "+1 Shade, Steel & Frequency",
+  risk: "Fractures into a seized Mask under the False Light or bondage",
+  gift: "Sovereign Union: Veil softens the first Mark, immune to single-Mask Seizure, split penalties, and adversary counters",
+  seized: null,
+  use: "All three Masks have answered (or you claimed the Name). Unites Nyx, Eris and Lilith without split penalties. Taking the False Light or accepting bondage fractures the union into whichever Mask answers that pressure; reunify once free.",
+};
+export const maskOf = (k) => (k === "venefica" ? VENEFICA : MASKS[k]);
 // The False Light, said the same way as a Mask in the guide: what it gives while it lasts, and what it bills.
 export const LIGHT = {
   name: "The False Light",
@@ -217,9 +230,11 @@ export function newGame({ seed = "endless", mode = "endless", tutorial = false, 
   }
   if (mode === "ascension" && occult) s.asc.occ = freshOcc(s);
   // The Depth Pass (synergy.js): all its state lives under asc.syn, only on a run begun with it. seq numbers the fights.
-  if (mode === "ascension" && occult && depth) s.asc.syn = { v: depth === 1 ? 1 : depth === 2 ? 2 : depth === 3 ? 3 : 4, seq: 0, used: {}, fired: {}, laid: null, ease: 0, witnessed: [], rit: { done: {}, seen: [], log: [] }, prep: { v: 1, hours: {}, ready: null, plus: {}, log: {}, spoils: 0 } };
-  // The Breadth Pass (breadth.js): rules 4 only. Its threads and people live under asc.brd.
-  if (s.asc && s.asc.syn && s.asc.syn.v === 4) s.asc.brd = freshBrd();
+  if (mode === "ascension" && occult && depth) s.asc.syn = { v: depth === 1 ? 1 : depth === 2 ? 2 : depth === 3 ? 3 : depth === 4 ? 4 : 5, seq: 0, used: {}, fired: {}, laid: null, ease: 0, witnessed: [], rit: { done: {}, seen: [], log: [] }, prep: { v: 1, hours: {}, ready: null, plus: {}, log: {}, spoils: 0 } };
+  // The Breadth Pass (breadth.js): rules 4+. Its threads and people live under asc.brd.
+  if (s.asc && s.asc.syn && s.asc.syn.v >= 4) s.asc.brd = freshBrd();
+  // Lux Venefica (rules 5): the union of Nyx, Eris and Lilith under asc.uni.
+  if (s.asc && s.asc.syn && s.asc.syn.v >= 5) s.asc.uni = freshUni();
   draw(s);
   return s;
 }
@@ -245,7 +260,7 @@ export function migrate(s) {
     else if (v && typeof v === "object" && !Array.isArray(v) && (!have || typeof have !== "object" || Array.isArray(have))) s[k] = v;
     else if (typeof v === "number" && !Number.isFinite(have)) s[k] = v;
   }
-  if (!MASKS[s.mask]) s.mask = "bare";
+  if (!MASKS[s.mask] && s.mask !== "venefica") s.mask = "bare";
   if (s.stir && !MASKS[s.stir]) s.stir = null;
   s.bonds = s.bonds.filter((b) => BONDS[b]);
   s.spent = s.spent.filter((b) => BONDS[b]);
@@ -254,6 +269,8 @@ export function migrate(s) {
   if (s.asc && "occ" in s.asc) migrateOcc(s);
   if (s.asc && "syn" in s.asc) migrateSyn(s);
   if (s.asc && "brd" in s.asc) migrateBrd(s);
+  if (s.asc && "uni" in s.asc) migrateUni(s);
+  if (s.mask === "venefica" && !uniOn(s)) s.mask = "bare";
   if (s.asc) {
     const unavailable = (id) => {
       if (id === BOND_CARD.id) return !bondOffer(s);
@@ -270,7 +287,7 @@ const BRD_KEYS = new Set(Object.keys(BRD_THREADS));
 function migrateBrd(s) {
   const a = s.asc;
   const b = a.brd;
-  if (!b || typeof b !== "object" || Array.isArray(b) || !(a.syn && a.syn.v === 4)) {
+  if (!b || typeof b !== "object" || Array.isArray(b) || !(a.syn && a.syn.v >= 4)) {
     delete a.brd;
     if (BRD_IDS.has(s.cardId)) draw(s);
     return;
@@ -280,6 +297,32 @@ function migrateBrd(s) {
   b.v = 1;
   b.t = Object.fromEntries(Object.entries(rec(b.t)).filter(([k, v]) => BRD_KEYS.has(k) && Number.isInteger(v) && v >= 0 && v <= draws));
   b.npc = Object.fromEntries(Object.entries(rec(b.npc)).filter(([k, v]) => Object.hasOwn(BRD_PEOPLE, k) && Number.isInteger(v) && v !== 0).map(([k, v]) => [k, Math.max(-2, Math.min(3, v))]));
+}
+const ACTIVE_MASKS = ["nyx", "eris", "lilith"];
+const freshUni = () => ({ v: 1, worn: [], unlocked: false, early: false, ever: false, count: 0, fractures: 0, fracturedDay: 0, fracturedCage: 0, lastFracture: null });
+export const uniOn = (s) => !!(s.asc && s.asc.syn && s.asc.syn.v >= 5 && s.asc.uni);
+function migrateUni(s) {
+  const a = s.asc;
+  const u = a.uni;
+  if (!u || typeof u !== "object" || Array.isArray(u) || !(a.syn && a.syn.v >= 5)) {
+    delete a.uni;
+    if (s.mask === "venefica") s.mask = "bare";
+    return;
+  }
+  const num = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
+  u.v = 1;
+  u.worn = Array.isArray(u.worn) ? [...new Set(u.worn.filter((m) => ACTIVE_MASKS.includes(m)))] : [];
+  u.early = u.early === true;
+  u.unlocked = u.unlocked === true || ACTIVE_MASKS.every((m) => u.worn.includes(m));
+  u.ever = u.ever === true;
+  u.count = num(u.count);
+  u.fractures = num(u.fractures);
+  u.fracturedDay = num(u.fracturedDay);
+  u.fracturedCage = Math.min(8, num(u.fracturedCage));
+  const lf = u.lastFracture;
+  u.lastFracture = lf && typeof lf === "object" && ACTIVE_MASKS.includes(lf.mask) && (lf.cause === "light" || lf.cause === "bondage")
+    ? { mask: lf.mask, cause: lf.cause }
+    : null;
 }
 // The Depth Pass's state (synergy.js): repaired where it can be, dropped where it can't (the run then plays on without
 // synergies), and never grafted onto a run that didn't carry it. It needs the expansion it is part of.
@@ -293,7 +336,7 @@ function migrateSyn(s) {
     return;
   }
   const rec = (o) => (o && typeof o === "object" && !Array.isArray(o) ? o : {});
-  y.v = y.v === 2 || y.v === 3 || y.v === 4 ? y.v : 1;
+  y.v = [2, 3, 4, 5].includes(y.v) ? y.v : 1;
   y.seq = Number.isInteger(y.seq) && y.seq >= 0 ? y.seq : 0;
   y.used = Object.fromEntries(Object.entries(rec(y.used)).filter(([, v]) => v === true || (Number.isInteger(v) && v > 0)));
   y.fired = Object.fromEntries(Object.entries(rec(y.fired)).filter(([k, v]) => SYNERGIES.some((x) => x.id === k) && Number.isInteger(v) && v > 0));
@@ -357,8 +400,8 @@ function migratePrep(s) {
 function rollMods(s, roll) {
   const stat = roll.stat || "fortune";
   let mod = stat === "fortune" ? 0 : STATS[stat];
-  const m = MASKS[s.mask];
-  if (m.stat && m.stat === stat && answers(s)) mod += 1;
+  const m = maskOf(s.mask);
+  if (m && m.stat && (m.stat === stat || (m.stat === "all" && (stat === "shade" || stat === "steel" || stat === "freq"))) && answers(s)) mod += 1;
   mod += roll.mod || 0;
   // Yellow: one Position worse. Strength upright holds it off; reversed, it comes a Strain sooner.
   const strength = s.arc ? arcOn(s, "strength") : null;
@@ -529,8 +572,8 @@ function applyFx(s, fx, notes) {
       case "mark":
         if (v < 0 && s.arc) v = Math.min(0, v + (arcOn(s, "justice") === "up" ? -1 : arcOn(s, "justice") === "rev" ? 1 : 0));
         if (v >= 2 && s.arc && arcOn(s, "hierophant") === "rev") v += 1;
-        if (v > 0 && s.mask === "nyx" && answers(s)) {
-          if (s.maskLocked) {
+        if (v > 0 && (s.mask === "nyx" || s.mask === "venefica") && answers(s)) {
+          if (s.maskLocked && s.mask === "nyx") {
             notes.push("The Vanishing: nothing sees you. Mark holds.");
             break;
           }
@@ -624,6 +667,11 @@ function applyFx(s, fx, notes) {
       case "set":
         if (v.house && !s.flags.house) notes.push("A room at the House. It counts toward Ordinary Time.");
         Object.assign(s.flags, v);
+        if (v.name && uniOn(s) && !s.asc.uni.unlocked) {
+          s.asc.uni.unlocked = true;
+          s.asc.uni.early = true;
+          notes.push("You took the Name: Nyx, Eris and Lilith can unify as Lux Venefica now.");
+        }
         break;
       case "unset":
         for (const f of [].concat(v)) {
@@ -751,14 +799,21 @@ export function preview(s, side) {
     for (const t of OUTCOMES) if (p[t] > 1e-9) runs.push({ p: p[t], res: choose(copy(s), side, { tier: t }) });
   } else runs.push({ p: 1, res: choose(copy(s), side) });
   const touched = new Set();
-  let lethal = 0, crown = 0, kept = 0;
+  let lethal = 0, crown = 0, kept = 0, fracP = 0;
   const endings = new Set();
   const wins = new Set();
   const keeps = new Set();
+  const fracMasks = new Set();
+  const fracCauses = new Set();
   const bonds = {};
   for (const r of runs) {
     for (const [k, v] of Object.entries(r.res.delta)) if (v) touched.add(k);
     for (const b of r.res.spent || []) bonds[b] = (bonds[b] || 0) + r.p;
+    if (r.res.fractured) {
+      fracP += r.p;
+      fracMasks.add(r.res.fractured.mask);
+      fracCauses.add(r.res.fractured.cause);
+    }
     if (!r.res.ending) continue;
     if (ENDINGS[r.res.ending].win) (crown += r.p), wins.add(r.res.ending);
     else if (s.asc && ENDINGS[r.res.ending].kept) (kept += r.p), keeps.add(r.res.ending);
@@ -780,6 +835,7 @@ export function preview(s, side) {
   if (s.asc) {
     // A "kept" ending (By Decree) is neither a death nor a win: the run ends seated.
     out.kept = kept > 1e-9 ? { p: Math.min(1, kept), endings: [...keeps] } : null;
+    if (uniOn(s)) out.fracture = fracP > 1e-9 ? { p: Math.min(1, fracP), masks: [...fracMasks], causes: [...fracCauses] } : null;
     out.enc = encPreview(s, side, ch, runs);
   }
   return out;
@@ -901,6 +957,7 @@ export function choose(s, side, opts = {}) {
   const notes = [];
   const keys = tracked(s);
   const before = Object.fromEntries(keys.map((k) => [k, s[k]]));
+  const uniBefore = uniOn(s) ? { active: s.mask === "venefica", comm: s.communion, cage: s.cage, claimed: !!(s.asc && s.asc.occ && s.asc.occ.claimed) } : null;
   const encBefore = s.asc ? encSnap(s) : null;
   const spentBefore = (s.spent || []).length;
   const spentNow = () => (s.spent || []).slice(spentBefore);
@@ -950,6 +1007,8 @@ export function choose(s, side, opts = {}) {
   if (loud && eking !== "up") applyFx(s, { mark: eking === "rev" ? 2 : 1 }, notes), notes.push(`The fight went the other way, loudly: Mark +${eking === "rev" ? 2 : 1}.`);
   const text = branch.text || ch.text || "";
 
+  recordWornMask(s, s.mask, notes);
+
   s.turns++;
   s.recent = [card.id, ...s.recent].slice(0, 10);
   if (card.once) s.flags["seen_" + card.id] = true;
@@ -966,6 +1025,7 @@ export function choose(s, side, opts = {}) {
   if (card.dusk) {
     if (s.asc) s.asc.armed = null; // a working laid on it is spent with it
     if (occOn(s)) s.asc.occ.refuse = false;
+    const fractured = maybeFracture(s, card, ch, side, roll, uniBefore, measure(), notes);
     checkEnd(s, card, notes, {});
     if (s.over) s.endBy = s.endBy || card.id;
     const board = { ...s, bonds: [...s.bonds], spent: [...(s.spent || [])], flags: { ...s.flags } };
@@ -974,13 +1034,17 @@ export function choose(s, side, opts = {}) {
     const delta = measure();
     if (!s.over) draw(s);
     else closeDay(s);
-    return { side, label: ch.label, roll, delta, text, notes, ending: s.over, nightfall: null, card: card.id, event: s.lastEvent, spent: spentNow(), board };
+    const dres = { side, label: ch.label, roll, delta, text, notes, ending: s.over, nightfall: null, card: card.id, event: s.lastEvent, spent: spentNow(), board };
+    if (fractured) dres.fractured = fractured;
+    return dres;
   }
 
   // Exodus: the adversary's intent, its clock and roads, the Act's bookkeeping.
   const encTurn = s.asc ? ascTurn(s, card, ch, side, roll, before, encBefore, notes) : null;
 
   if (card.id !== BOND_CARD.id) turnPressure(s, card, notes);
+
+  const fractured = maybeFracture(s, card, ch, side, roll, uniBefore, measure(), notes);
 
   checkEnd(s, card, notes, {});
   if (s.over) s.endBy = s.endBy || card.id;
@@ -1010,6 +1074,7 @@ export function choose(s, side, opts = {}) {
   if (!s.over) draw(s);
   else if (!nightfall) closeDay(s); // night() already closed the day it ended on
   const res = { side, label: ch.label, roll, delta, text, notes, ending: s.over, nightfall, card: card.id, event: s.lastEvent, spent: spentNow(), board };
+  if (fractured) res.fractured = fractured;
   if (enc) res.enc = enc;
   return res;
 }
@@ -1267,7 +1332,7 @@ function draw(s) {
 
 // Activation Seizure (§9.5): under load, who decides which frequency answers?
 function seizure(s) {
-  if (s.seizedToday || s.over) return;
+  if (s.seizedToday || s.over || s.mask === "venefica") return;
   if (s.asc) {
     // No Activation on a fight's opening, stop or last card: those decide the fight, not the Mask.
     const c = currentCard(s);
@@ -1302,21 +1367,65 @@ function seizure(s) {
     s.maskLocked = true;
     // §9.5: the Mask's risk fires at full strength. Eris's Isolation doesn't wait for the fourth card.
     if (pick === "eris") s.longing = clamp(s.longing + 1, 0, 4);
+    const unlockNotes = [];
+    recordWornMask(s, pick, unlockNotes);
     s.lastEvent = {
       kind: "seizure",
       roll: r,
       mask: pick,
-      text: `Seizure. ${MASKS[pick].name} answers a signal you did not send. ${MASKS[pick].seized}. It holds until nightfall; breaking free costs 2 Strain.`,
+      text: `Seizure. ${MASKS[pick].name} answers a signal you did not send. ${MASKS[pick].seized}. It holds until nightfall; breaking free costs 2 Strain.${unlockNotes.length ? " " + unlockNotes[0] : ""}`,
     };
   }
 }
 
-// ---------- masks ----------
+// ---------- masks & Lux Venefica ----------
+function recordWornMask(s, m, notes = []) {
+  if (!uniOn(s) || !ACTIVE_MASKS.includes(m)) return;
+  const u = s.asc.uni;
+  if (!u.worn.includes(m)) u.worn.push(m);
+  if (!u.unlocked && ACTIVE_MASKS.every((k) => u.worn.includes(k))) {
+    u.unlocked = true;
+    notes.push("All three Masks have answered: Nyx, Eris and Lilith can unify as Lux Venefica.");
+  }
+}
+
+// Dissociative fracture (DID mapping): taking the False Light fractures to Lilith; surrendering sovereignty
+// (Cage / Claimed Will) fractures to whichever Mask answers the choice that bound you.
+export function fractureMaskFor(s, card, ch, side, roll, cause, delta) {
+  if (cause === "light") return "lilith";
+  const verb = (ch && ch.verb) || "";
+  if (verb === "confront" || (roll && roll.stat === "steel")) return "eris";
+  if (verb === "ally" || (roll && roll.stat === "freq") || (delta && delta.longing) || (card && card.enc === "shepherd")) return "lilith";
+  return "nyx";
+}
+
+function maybeFracture(s, card, ch, side, roll, uniBefore, delta, notes) {
+  if (!uniBefore || !uniBefore.active || s.mask !== "venefica" || s.over) return null;
+  const lightBreak = uniBefore.comm === 0 && s.communion > 0;
+  const bondageBreak = s.cage > uniBefore.cage || (!uniBefore.claimed && !!(s.asc && s.asc.occ && s.asc.occ.claimed));
+  if (!lightBreak && !bondageBreak) return null;
+  const cause = lightBreak ? "light" : "bondage";
+  const pick = fractureMaskFor(s, card, ch, side, roll, cause, delta);
+  s.mask = pick;
+  s.maskAge = 0;
+  s.maskLocked = true;
+  if (pick === "eris") s.longing = clamp(s.longing + 1, 0, 4);
+  recordWornMask(s, pick, notes);
+  const u = s.asc.uni;
+  u.fractures++;
+  u.fracturedDay = s.day;
+  u.fracturedCage = s.cage;
+  u.lastFracture = { mask: pick, cause };
+  notes.push(`Dissociative fracture (${cause === "light" ? "the False Light" : "bondage"}): Lux Venefica shatters. ${MASKS[pick].name} seizes the wheel (${MASKS[pick].seized}).`);
+  return { mask: pick, cause };
+}
+
 // Base Strain for changing Mask: free at dawn, 1 after, 2 to break a Seizure (§9.5, "rest of the scene"
 // — here the day). maskStrain() is what the engine actually charges, Hollow 2's +1 tax included.
 export function maskCost(s, m) {
   if (m === s.mask) return 0;
   if (s.maskLocked) return 2;
+  if (m === "venefica") return s.asc && s.asc.enc ? 1 : s.bell === 0 ? 0 : 1;
   // An Ace read (arcana.js): its element's Mask goes on free at any hour, or reversed costs 1 more.
   const ace = s.arc ? arcOn(s, "ace_" + Object.keys(SUITS).find((k) => SUITS[k].mask === m)) : null;
   if (ace === "up") return 0;
@@ -1340,6 +1449,7 @@ export function resolveStir(s, hold) {
   s.mask = pick;
   s.maskAge = 0;
   s.maskLocked = false;
+  recordWornMask(s, pick);
   return { ok: true, held: false, mask: pick, delta: {} };
 }
 
@@ -1352,10 +1462,48 @@ export function switchMask(s, m) {
   s.mask = m;
   s.maskAge = 0;
   s.maskLocked = false;
+  recordWornMask(s, m, notes);
   checkEnd(s, null, notes, delta);
   if (s.over) {
     s.endBy = "mask:" + m;
     closeDay(s);
+  }
+  return { ok: true, cost, delta, notes, ending: s.over };
+}
+
+export function canUnify(s) {
+  if (!uniOn(s) || s.over || !s.asc.uni.unlocked) return { ok: false, reason: "Locked" };
+  if (s.mask === "venefica") return { ok: false, reason: "Already unified." };
+  if (s.communion > 0) return { ok: false, reason: "Cannot unify inside the False Light." };
+  if (s.maskLocked) return { ok: false, reason: "Break the seizure first." };
+  if (s.stir) return { ok: false, reason: "Answer the stirring Mask first." };
+  const u = s.asc.uni;
+  if (u.fractures > 0 && s.day <= u.fracturedDay && s.cage >= u.fracturedCage) {
+    return { ok: false, reason: "Fractured today: lower the Cage or wait for dawn to reunify." };
+  }
+  return { ok: true, cost: maskStrain(s, "venefica"), reunify: !!u.ever };
+}
+
+export function unify(s) {
+  if (s.stir) resolveStir(s, false);
+  const gate = canUnify(s);
+  if (!gate.ok) return { ok: false, reason: gate.reason };
+  const cost = maskCost(s, "venefica");
+  const notes = [];
+  const delta = cost ? applyFx(s, { strain: cost }, notes) : {};
+  const u = s.asc.uni;
+  const wasEver = u.ever;
+  s.mask = "venefica";
+  s.maskAge = 0;
+  s.maskLocked = false;
+  u.ever = true;
+  u.count++;
+  checkEnd(s, null, notes, delta);
+  if (s.over) {
+    s.endBy = "mask:venefica";
+    closeDay(s);
+  } else {
+    notes.push(wasEver ? "Reunified as Lux Venefica." : "Nyx, Eris and Lilith converge: you stand as Lux Venefica.");
   }
   return { ok: true, cost, delta, notes, ending: s.over };
 }
@@ -1907,7 +2055,7 @@ function ascOffer(s, k) {
 // Which Mask the run leaned on, by the rolls her +1 helped: the adversary comes ready for her. The Bare Face never
 // has a +1, so she's never countered. Three Masks rolling and none over two in five: it can't decide what you are.
 function counterOf(s, def) {
-  if (riteOn(s, "name")) return null; // the Taken Name (occult.js RITES): there's no file on who you are now
+  if (riteOn(s, "name") || s.mask === "venefica") return null; // the Taken Name or unified Lux Venefica: there's no single-Mask file on who you are now
   const u = s.asc.hist.used;
   const masks = ["nyx", "eris", "lilith"];
   const total = masks.reduce((n, m) => n + u[m], 0);
@@ -2135,7 +2283,14 @@ function ascTurn(s, card, ch, side, roll, before, encBefore, notes) {
   const a = s.asc;
   const h = a.hist;
   h[s.mask] = (h[s.mask] || 0) + 1;
-  if (roll && MASKS[s.mask].stat === roll.stat && answers(s)) h.used[s.mask]++;
+  const cm = maskOf(s.mask);
+  if (roll && answers(s)) {
+    if (cm.stat === "all" && ["shade", "steel", "freq"].includes(roll.stat)) {
+      h.used[roll.stat === "shade" ? "nyx" : roll.stat === "steel" ? "eris" : "lilith"]++;
+    } else if (cm && cm.stat === roll.stat) {
+      h.used[s.mask]++;
+    }
+  }
   if (card.tier >= 2) h.wolves++;
   if (card.id === "whisper" && side === "left" && roll && roll.tier !== "miss" && roll.tier !== "ruin") h.held++;
   if (card.id === "cutchain" && roll && (roll.tier === "hit" || roll.tier === "radiance")) {
@@ -2296,7 +2451,10 @@ const ascPool = (s) => {
   // The Breadth Pass (breadth.js): the city's places and people, on rules 4 only.
   return brdOn(s) ? occ.concat(BRD_CARDS.filter(fits)) : occ;
 };
-const ascBoost = (s, c) => (s.asc.act === 2 && s.asc.road ? ROADS[s.asc.road].boost[c.id] || 1 : 1) * (c.place && brdOn(s) ? brdWeight(s, c) : 1);
+const ascBoost = (s, c) =>
+  (s.asc.act === 2 && s.asc.road ? ROADS[s.asc.road].boost[c.id] || 1 : 1) *
+  (c.place && brdOn(s) ? brdWeight(s, c) : 1) *
+  (uniOn(s) && c.id === "venefica1" && ACTIVE_MASKS.every((k) => s.asc.uni.worn.includes(k)) ? 4 : 1);
 
 // The card with its own build() applied, but before the fight's last-two rule (encWrap): what the intent reads.
 const rawCard = (s) => {
@@ -2623,7 +2781,7 @@ export function endCause(s) {
   const key = s.over.startsWith("named") ? "named" : s.over;
   let by = null;
   if (s.endBy === "nightfall") by = "at nightfall";
-  else if (s.endBy && s.endBy.startsWith("mask:")) by = `putting on ${MASKS[s.endBy.slice(5)].name}`;
+  else if (s.endBy && s.endBy.startsWith("mask:")) by = `putting on ${(maskOf(s.endBy.slice(5)) || { name: s.endBy.slice(5) }).name}`;
   else if (s.endBy && s.endBy.startsWith("relic:")) by = `working the ${RELICS[s.endBy.slice(6)].name}`;
   else if (BY_ID[s.endBy]) by = BY_ID[s.endBy].who;
   return { by, meter: END_METER[key] || null };
@@ -2650,7 +2808,7 @@ export function parseChallenge(hash, today) {
 // Exodus dares (2026-10-17): the same road for a friend. Only a short seed travels (ascension-<8 base36>); a road
 // begun before short seeds shares as a plain link. The link carries the Edict and how far the sender got.
 const ROAD_SEED = /^ascension-([0-9a-z]{8})$/;
-export const exodusRules = (s) => s.asc && s.asc.syn ? ([2, 3, 4].includes(s.asc.syn.v) ? s.asc.syn.v : 1) : 0;
+export const exodusRules = (s) => s.asc && s.asc.syn ? ([2, 3, 4, 5].includes(s.asc.syn.v) ? s.asc.syn.v : 1) : 0;
 export function exodusHash(s) {
   const m = s.asc && ROAD_SEED.exec(s.seedLabel);
   const version = exodusRules(s);
@@ -2658,9 +2816,9 @@ export function exodusHash(s) {
 }
 export function parseExodus(hash) {
   const m = /^#?exodus-([0-9a-z]{8})-e(\d{1,2})-a([123])(?:-d(\d))?(?:-([a-z_]+))?$/.exec(String(hash || ""));
-  if (!m || +m[2] > MAX_EDICT || (m[4] !== undefined && !["1", "2", "3", "4"].includes(m[4]))) return null;
+  if (!m || +m[2] > MAX_EDICT || (m[4] !== undefined && !["1", "2", "3", "4", "5"].includes(m[4]))) return null;
   const ending = m[5] && Object.prototype.hasOwnProperty.call(ENDINGS, m[5]) ? m[5] : null;
-  // A bare link replays the pre-Depth rules. -d1, -d2, -d3 and -d4 keep their own preparation and encounter rules.
+  // A bare link replays the pre-Depth rules. -d1, -d2, -d3, -d4 and -d5 keep their own preparation, breadth and union rules.
   return { seed: `ascension-${m[1]}`, edict: +m[2], act: +m[3], ending, ...(m[4] ? { depth: Number(m[4]) } : {}) };
 }
 // Each fight, by how it ended: a road out, a disengage, driven out; and one the run ended inside.

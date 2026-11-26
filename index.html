@@ -84,6 +84,7 @@ body.communion{--accent:var(--sun)}
 body.seized-nyx{--accent:#8f9bd6}
 body.seized-eris{--accent:var(--alert)}
 body.seized-lilith{--accent:#3fd0a0}
+body.unified{--accent:#e8d6ff}
 body.communion #app{filter:saturate(1.25) brightness(1.06)}
 body.reckoning #app{filter:saturate(.35) contrast(.95)}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
@@ -115,6 +116,7 @@ button:focus-visible,.card:focus-visible{outline:2px solid var(--glow);outline-o
 .seal i[data-k=nyx]{background-image:url("sigils/nyx.webp")}
 .seal i[data-k=eris]{background-image:url("sigils/eris.webp")}
 .seal i[data-k=lilith]{background-image:url("sigils/lilith.webp")}
+.seal i[data-k=venefica]{background-image:url("sigils/venefica.webp")}
 .seal i.on{opacity:.2;transform:none}
 .seal i.flare{opacity:.6;transform:scale(1.04);transition-duration:.3s}
 body.reckoning .seal i.on{opacity:.1}
@@ -260,6 +262,14 @@ body.reckoning .seal i.on{opacity:.1}
 .mask.on{border-color:var(--accent);color:var(--veil);background:color-mix(in srgb, var(--accent) 10%, transparent)}
 .mask.arm{border-color:var(--alert);color:var(--alert)}
 .mask.locked .cost{color:var(--alert)}
+.mask.unified-part{border-color:color-mix(in srgb,var(--accent) 55%,transparent);color:var(--veil)}
+.venefica-bar{display:flex;align-items:center;justify-content:center;gap:8px;min-height:24px}
+.venefica-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:5px 12px;border:1px solid color-mix(in srgb,#e8d6ff 55%,transparent);border-radius:3px;font-family:var(--f-inscr);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--veil);background:color-mix(in srgb,#e8d6ff 10%,rgba(8,6,9,.85))}
+.venefica-btn.arm{border-color:var(--alert);color:var(--alert)}
+.venefica-status{font-family:var(--f-inscr);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--veil-dim);text-align:center}
+.venefica-status.on{color:#e8d6ff}
+.odds .fracture,.card .choice .fracture{color:var(--alert)}
+.card .choice .fracture{display:block;margin-top:4px;font-family:var(--f-body);font-size:11.5px;letter-spacing:0}
 .maskline{text-align:center;font-size:11.5px;color:var(--veil-mute);min-height:16px}
 
 /* ---------- Exodus: the adversary on the card, relics under the Masks ---------- */
@@ -597,6 +607,7 @@ body.fight #mode-lbl{display:flex;min-width:0;white-space:nowrap;gap:2px}
 .mask-key-art[data-mask="nyx"]{background-image:url("sigils/nyx.webp");color:var(--nyx)}
 .mask-key-art[data-mask="eris"]{background-image:url("sigils/eris.webp");color:var(--eris)}
 .mask-key-art[data-mask="lilith"]{background-image:url("sigils/lilith.webp");color:var(--lilith)}
+.mask-key-art[data-mask="venefica"]{background-image:url("sigils/venefica.webp");color:#e8d6ff}
 .mask-key-art[data-mask="bare"]{display:grid;place-items:center;color:var(--human);background:#17120f}
 .mrow{grid-template-columns:64px 1fr}
 .mask-key-art svg{width:40px;height:40px;margin:0;color:inherit}
@@ -624,7 +635,7 @@ body[data-adversary="hierarch"] .card{--art:#df7186!important}
 </style>
 </head>
 <body>
-<div class="seal" id="seal" aria-hidden="true"><i data-k="bare"></i><i data-k="nyx"></i><i data-k="eris"></i><i data-k="lilith"></i></div>
+<div class="seal" id="seal" aria-hidden="true"><i data-k="bare"></i><i data-k="nyx"></i><i data-k="eris"></i><i data-k="lilith"></i><i data-k="venefica"></i></div>
 <div id="app" class="screen" hidden>
   <div class="top">
     <button class="iconbtn" id="btn-home" aria-label="Menu">
@@ -669,6 +680,7 @@ body[data-adversary="hierarch"] .card{--art:#df7186!important}
       <button id="go-right" type="button"></button>
     </div>
     <div class="masks" id="masks"></div>
+    <div class="venefica-bar" id="venefica-bar" hidden></div>
     <div class="relics" id="relics" hidden></div>
     <div class="maskline" id="maskline"></div>
   </div>
