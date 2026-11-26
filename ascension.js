@@ -432,6 +432,50 @@ export const RELICS = {
     transmute: "a spent Bond still stands beside you, for the rest of the run", found: "The lamp from a ward-keeper's window, the one that meant the door was open. It went into evidence when the door stopped opening." },
   purse: { name: "The Almoner's Purse", art: "relic_purse", uses: 1, works: "Favor +3", price: "gilt +3: the Festival starts higher while you owe it, and a Reckoning collects it",
     transmute: "all gilt cleared", found: "An almoner's purse, heavy, tagged as evidence. Somebody's always owed what's in it." },
+  // The Breadth relics (rules 4 only; BREADTH_PASS.md, T4c, proposed canon, 2026-11-26). Each is data: fx.work is what a
+  // working does (fx: applied; clock: the adversary's clock, and alt is what it does outside a fight; rest: it counts
+  // as a night's rest), fx.price is what the working costs, fx.transmute what destroying it does (Gnosis +1 follows).
+  // No per-relic engine code: engine.js reads the table.
+  tally: { name: "The Tally-Stick", art: "relic_tally", uses: 1, brd: true, works: "Mark −2", price: "Hollow +1", transmute: "Mark −3",
+    fx: { work: { fx: { mark: -2 } }, price: { hollow: 1 }, transmute: { mark: -3 } },
+    found: "A notched stick, split down its length, one half kept by the house and one by whoever owed. Yours is the half that's left." },
+  bell: { name: "The Silenced Bell", art: "relic_bell", uses: 1, brd: true, works: "Strain −2", price: "Longing +1", transmute: "Strain −3",
+    fx: { work: { fx: { strain: -2 } }, price: { longing: 1 }, transmute: { strain: -3 } },
+    found: "A hand-bell with the clapper cut out and stored separately. Held right, the quiet it makes is the kind you can rest inside." },
+  shoe: { name: "The Pilgrim's Shoe", art: "relic_shoe", uses: 1, brd: true, works: "Hollow −2", price: "Mark +1", transmute: "Hollow −3",
+    fx: { work: { fx: { hollow: -2 } }, price: { mark: 1 }, transmute: { hollow: -3 } },
+    found: "One worn shoe, left at a way-shrine by someone who arrived. The sole is thin as a page. It's still warm from walking." },
+  spade: { name: "The Sexton's Spade", art: "relic_spade", uses: 1, brd: true, works: "shows the Cage; the Cage −1, Untaggable +1", price: "Strain +1", transmute: "the Cage −3",
+    fx: { work: { fx: { cage: -1, untag: 1 }, cage: true }, price: { strain: 1 }, transmute: { cage: -3 } },
+    found: "A grave-digger's spade, the blade worn to a curve. It was never used on the dead. It was used on what the living buried to keep." },
+  candle: { name: "The Candle-End", art: "relic_candle", uses: 1, brd: true, works: "Longing −2", price: "Favor −1", transmute: "Longing −3",
+    fx: { work: { fx: { longing: -2 } }, price: { favor: -1 }, transmute: { longing: -3 } },
+    found: "A stub of a vigil candle, still faintly lit when no one is looking. Someone kept it going for a person who didn't come back. It's yours to keep going." },
+  whistle: { name: "The Warden's Whistle", art: "relic_whistle", uses: 1, brd: true, works: "Untaggable +2", price: "Strain +1", transmute: "Untaggable +3",
+    fx: { work: { fx: { untag: 2 } }, price: { strain: 1 }, transmute: { untag: 3 } },
+    found: "A tin whistle on a lanyard, a ward-keeper's. Blown, it doesn't call anyone. It makes the street forget which way you went." },
+  shutter: { name: "The Warden's Shutter", art: "relic_shutter", uses: 1, brd: true, works: "the adversary's clock −1 (outside a fight, Strain −1)", price: "Mark +1", transmute: "Strain −2, Mark −1",
+    fx: { work: { clock: -1, alt: { strain: -1 } }, price: { mark: 1 }, transmute: { strain: -2, mark: -1 } },
+    found: "One iron window-shutter from a ward-house, unhinged and carried out on a back. Held up, it gives you one blank wall to stand behind." },
+  laurel: { name: "The Hollow Laurel", art: "relic_laurel", uses: 1, brd: true, pull: true, works: "Favor +2", price: "the Pull +1", transmute: "the Pull −2",
+    fx: { work: { fx: { favor: 2 } }, price: { apo: 1 }, transmute: { apo: -2 } },
+    found: "A wreath of gilded laurel, hollow as a bird's bone, from a festival no one will say they enjoyed. It pays back in the room's good mood." },
+  compass: { name: "The Drowned Compass", art: "relic_compass", uses: 1, brd: true, works: "counts as a night's rest", price: "Longing +1", transmute: "Hollow −2",
+    fx: { work: { rest: true }, price: { longing: 1 }, transmute: { hollow: -2 } },
+    found: "A brass compass pulled from a flooded cellar. The needle doesn't point north. It points to wherever you could lie down, tonight." },
+  // Four more (T4c, second tranche, 2026-11-26; proposed canon until the owner accepts them). Each mixes two tracks.
+  scale: { name: "The Pawnbroker's Scale", art: "relic_scale", uses: 1, brd: true, works: "Mark −1, Favor +1", price: "Strain +1", transmute: "Favor +2",
+    fx: { work: { fx: { mark: -1, favor: 1 } }, price: { strain: 1 }, transmute: { favor: 2 } },
+    found: "A brass beam-scale from a pawn-window. One pan is bent. Whatever you set in it weighs a little less than it did." },
+  coin: { name: "The Ferryman's Coin", art: "relic_coin", uses: 1, brd: true, works: "Gnosis +1, Hollow −1", price: "Mark +1", transmute: "Hollow −2, Longing −1",
+    fx: { work: { fx: { gnosis: 1, hollow: -1 } }, price: { mark: 1 }, transmute: { hollow: -2, longing: -1 } },
+    found: "A coin worn smooth on both faces, from under someone's tongue. It pays for a crossing. It doesn't say which way." },
+  censer: { name: "The Cold Censer", art: "relic_censer", uses: 1, brd: true, works: "the adversary's clock −2 (outside a fight, Mark −1)", price: "Longing +1", transmute: "Mark −2, Longing −1",
+    fx: { work: { clock: -2, alt: { mark: -1 } }, price: { longing: 1 }, transmute: { mark: -2, longing: -1 } },
+    found: "A thurible with the chains cut, the coals long out. Swung once, it still lays down a smoke that nobody can look through." },
+  letter: { name: "The Unposted Letter", art: "relic_letter", uses: 1, brd: true, works: "Longing −1, Untaggable +1", price: "Favor −1", transmute: "Untaggable +2, Longing −1",
+    fx: { work: { fx: { longing: -1, untag: 1 } }, price: { favor: -1 }, transmute: { untag: 2, longing: -1 } },
+    found: "A sealed letter with no direction written on it, from a dead-letter room. Whoever it was for has moved on. So has the handwriting." },
 };
 
 // ---------- the cards ----------
@@ -440,7 +484,9 @@ export const nextNamed = (s) => s.asc.named.find((x) => x.st !== "free" && !x.as
 const freedNames = (s) => s.asc.named.filter((x) => x.st === "free").map((x) => x.n);
 // Two relics, picked from the seed and a salt, among the ones you don't carry.
 export function relicPair(s, salt) {
-  const left = Object.keys(RELICS).filter((r) => !s.asc.relics.includes(r) && !(s.asc.locked || []).includes(r));
+  // The Breadth relics are offered on rules 4 only, so every older pool, and its order, is exactly what it was.
+  const v4 = !!(s.asc.syn && s.asc.syn.v >= 4);
+  const left = Object.keys(RELICS).filter((r) => !s.asc.relics.includes(r) && !(s.asc.locked || []).includes(r) && (v4 || !RELICS[r].brd));
   const h = hashStr(`${s.seedLabel}:${salt}`);
   const a = left.splice(h % left.length, 1)[0];
   const b = left.length ? left[(h >>> 8) % left.length] : a;

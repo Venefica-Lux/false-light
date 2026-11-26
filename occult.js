@@ -135,7 +135,8 @@ export function rulerPlanet(k) {
 // Whether relic k can Correspond on the card being read now: a reading, face down, reversed, ruled by its sphere.
 export function corresponds(s, k) {
   const c = reading(s);
-  return !!(occOf(s) && c && c.rev && rulerPlanet(c.id) === sphereOfRelic(k));
+  const p = sphereOfRelic(k); // a relic with no sphere (the Breadth relics) never corresponds
+  return !!(p && occOf(s) && c && c.rev && rulerPlanet(c.id) === p);
 }
 
 // The Great Work: one relic a run goes into the vessel at the first chapel (blackening: it can't be worked or

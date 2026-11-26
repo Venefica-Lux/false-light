@@ -1,11 +1,11 @@
 // FALSE LIGHT — offline cache. `node build.mjs` stamps VERSION and MUSIC with hashes of the files they cache.
-const VERSION = "false-light-cae6b0716b";
+const VERSION = "false-light-6f1dc97ef3";
 // The soundtrack keeps its own cache, named for the tracks rather than the release, so a code update
 // doesn't throw away (and re-download) 21 MB of music.
 const MUSIC = "false-light-music-e15a9f3dd9";
 // Web fonts keep a cache of their own too, so an update doesn't leave the next offline launch without its type.
 const FONTS = "false-light-fonts";
-const CORE = ["./", "index.html", "app.js", "engine.js", "cards.js", "arcana.js", "ascension.js", "occult.js", "synergy.js", "ritual.js", "prep.js", "audio-loops.js", "visuals.js", "swipe.js", "manifest.webmanifest", "THIRD_PARTY_NOTICES.md", "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png",
+const CORE = ["./", "index.html", "app.js", "engine.js", "cards.js", "arcana.js", "ascension.js", "occult.js", "synergy.js", "ritual.js", "prep.js", "breadth.js", "audio-loops.js", "visuals.js", "swipe.js", "manifest.webmanifest", "THIRD_PARTY_NOTICES.md", "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png",
   "sigils/venefica.webp", "sigils/nyx.webp", "sigils/eris.webp", "sigils/lilith.webp", "art/key-art-960.webp", "fonts/cinzel-OFL.txt", "fonts/cinzel-normal-500.woff2", "fonts/cinzel-normal-600.woff2", "fonts/cormorant-garamond-italic-500.woff2", "fonts/cormorant-garamond-normal-500.woff2", "fonts/cormorant-garamond-normal-600.woff2", "fonts/cormorantgaramond-OFL.txt", "fonts/fonts.css", "fonts/inter-OFL.txt", "fonts/inter-normal-400.woff2", "fonts/inter-normal-500.woff2", "fonts/inter-normal-600.woff2"];
 
 self.addEventListener("install", (e) => {

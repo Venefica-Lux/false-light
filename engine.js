@@ -19,10 +19,11 @@ import {
 import { SYNERGIES, synergiesFor, synHost, limitKey, witnessBond, liftable } from "./synergy.js";
 import { PREP_CARDS, hourOffer, spoilsOffer, prepHost, routeIntel } from "./prep.js";
 import { RECIPES, RIT_LEVELS, RIT_CARDS, benchOffer, ritSee } from "./ritual.js";
+import { BRD_CARDS, BRD_PLACES, BRD_PEOPLE, BRD_THREADS, brdOn, freshBrd, brdWeight, brdCall, brdEpilogue } from "./breadth.js";
 
 // Exodus's endings join the gallery; its cards stay out of CARDS (see ascension.js).
 Object.assign(ENDINGS, ASC_ENDINGS);
-export { CARDS, ENDINGS, SPARK_DAY, sparkDeck, heardDeck, ASC_CARDS, ENCOUNTERS, INTENTS, RELICS, ROADS, ACTS, VERBS, UNLOCKS, EDICTS, MAX_EDICT, encBestRoad, chairEnding, nextNamed, witness, pullAt, bareAt, SYNERGIES, synergiesFor };
+export { CARDS, ENDINGS, SPARK_DAY, sparkDeck, heardDeck, ASC_CARDS, ENCOUNTERS, INTENTS, RELICS, ROADS, ACTS, VERBS, UNLOCKS, EDICTS, MAX_EDICT, encBestRoad, chairEnding, nextNamed, witness, pullAt, bareAt, SYNERGIES, synergiesFor, BRD_CARDS, BRD_PLACES, BRD_PEOPLE, BRD_THREADS, brdEpilogue };
 
 export const METERS = {
   mark: { max: 6, label: "Mark", hint: "The Warden's eye: how much they've noticed. At 6 you are Named." },
@@ -84,7 +85,8 @@ export const LAUNCH_DAY = "2026-09-30";
 const ARC_CARDS = readingCards((k) => RELICS[k].name);
 const ARC_IDS = new Set(ARC_CARDS.map((c) => c.id));
 const OCC_IDS = new Set(OCC_CARDS.map((c) => c.id));
-const BY_ID = Object.fromEntries([...CARDS, ...ASC_CARDS, ...ARC_CARDS, ...OCC_CARDS, ...RIT_CARDS, ...PREP_CARDS, BOND_CARD].map((c) => [c.id, c]));
+const BRD_IDS = new Set(BRD_CARDS.map((c) => c.id));
+const BY_ID = Object.fromEntries([...CARDS, ...ASC_CARDS, ...ARC_CARDS, ...OCC_CARDS, ...RIT_CARDS, ...PREP_CARDS, ...BRD_CARDS, BOND_CARD].map((c) => [c.id, c]));
 export const cardById = (id) => BY_ID[id];
 
 // The Great Occult Expansion (occult.js), in a run that has it (s.asc.occ). Without it each reader below is exactly the
@@ -183,7 +185,8 @@ const fresh = () => ({
 // without it plays the same cards with the same dice.
 // arcana (default on): false plays Exodus, or a Vigil from SPARK_DAY, without the Celestial Arcana (tests and sims).
 // occult (default on): false plays Exodus without the Great Occult Expansion (occult.js; tests and sims).
-// depth: false plays the original road, 1 replays M3, 2 replays M4, and true or 3 starts the current rules.
+// depth: false plays the original road, 1 replays M3, 2 replays M4, 3 replays M5, and true or 4 starts the current rules
+// (the Breadth Pass, breadth.js).
 export function newGame({ seed = "endless", mode = "endless", tutorial = false, locked = [], edict: ed = 0, prev = null, arcana = true, occult = true, depth = true } = {}) {
   const s = Object.assign(fresh(), {
     mode,
@@ -214,7 +217,9 @@ export function newGame({ seed = "endless", mode = "endless", tutorial = false, 
   }
   if (mode === "ascension" && occult) s.asc.occ = freshOcc(s);
   // The Depth Pass (synergy.js): all its state lives under asc.syn, only on a run begun with it. seq numbers the fights.
-  if (mode === "ascension" && occult && depth) s.asc.syn = { v: depth === 1 ? 1 : depth === 2 ? 2 : 3, seq: 0, used: {}, fired: {}, laid: null, ease: 0, witnessed: [], rit: { done: {}, seen: [], log: [] }, prep: { v: 1, hours: {}, ready: null, plus: {}, log: {}, spoils: 0 } };
+  if (mode === "ascension" && occult && depth) s.asc.syn = { v: depth === 1 ? 1 : depth === 2 ? 2 : depth === 3 ? 3 : 4, seq: 0, used: {}, fired: {}, laid: null, ease: 0, witnessed: [], rit: { done: {}, seen: [], log: [] }, prep: { v: 1, hours: {}, ready: null, plus: {}, log: {}, spoils: 0 } };
+  // The Breadth Pass (breadth.js): rules 4 only. Its threads and people live under asc.brd.
+  if (s.asc && s.asc.syn && s.asc.syn.v === 4) s.asc.brd = freshBrd();
   draw(s);
   return s;
 }
@@ -248,6 +253,7 @@ export function migrate(s) {
   if ("arc" in s) migrateArc(s);
   if (s.asc && "occ" in s.asc) migrateOcc(s);
   if (s.asc && "syn" in s.asc) migrateSyn(s);
+  if (s.asc && "brd" in s.asc) migrateBrd(s);
   if (s.asc) {
     const unavailable = (id) => {
       if (id === BOND_CARD.id) return !bondOffer(s);
@@ -257,6 +263,23 @@ export function migrate(s) {
     if (!s.over && unavailable(s.cardId)) draw(s);
   }
   return s;
+}
+// The Breadth Pass's state (breadth.js): repaired where it can be, dropped alone where it can't (the run plays on
+// without its threads), and never grafted onto a run that lacked it. It needs rules 4.
+const BRD_KEYS = new Set(Object.keys(BRD_THREADS));
+function migrateBrd(s) {
+  const a = s.asc;
+  const b = a.brd;
+  if (!b || typeof b !== "object" || Array.isArray(b) || !(a.syn && a.syn.v === 4)) {
+    delete a.brd;
+    if (BRD_IDS.has(s.cardId)) draw(s);
+    return;
+  }
+  const rec = (o) => (o && typeof o === "object" && !Array.isArray(o) ? o : {});
+  const draws = s.draws | 0;
+  b.v = 1;
+  b.t = Object.fromEntries(Object.entries(rec(b.t)).filter(([k, v]) => BRD_KEYS.has(k) && Number.isInteger(v) && v >= 0 && v <= draws));
+  b.npc = Object.fromEntries(Object.entries(rec(b.npc)).filter(([k, v]) => Object.hasOwn(BRD_PEOPLE, k) && Number.isInteger(v) && v !== 0).map(([k, v]) => [k, Math.max(-2, Math.min(3, v))]));
 }
 // The Depth Pass's state (synergy.js): repaired where it can be, dropped where it can't (the run then plays on without
 // synergies), and never grafted onto a run that didn't carry it. It needs the expansion it is part of.
@@ -270,7 +293,7 @@ function migrateSyn(s) {
     return;
   }
   const rec = (o) => (o && typeof o === "object" && !Array.isArray(o) ? o : {});
-  y.v = y.v === 2 || y.v === 3 ? y.v : 1;
+  y.v = y.v === 2 || y.v === 3 || y.v === 4 ? y.v : 1;
   y.seq = Number.isInteger(y.seq) && y.seq >= 0 ? y.seq : 0;
   y.used = Object.fromEntries(Object.entries(rec(y.used)).filter(([, v]) => v === true || (Number.isInteger(v) && v > 0)));
   y.fired = Object.fromEntries(Object.entries(rec(y.fired)).filter(([k, v]) => SYNERGIES.some((x) => x.id === k) && Number.isInteger(v) && v > 0));
@@ -1217,6 +1240,8 @@ function draw(s) {
   if (!id && s.asc && s.asc.enc) id = encDraw(s);
   if (!id) {
     const pool = (s.asc ? ascPool(s) : CARDS).filter((c) => eligible(s, c));
+    // A thread come due (breadth.js) takes the draw: the city remembers. It still spends the draw's number.
+    const called = s.asc && brdOn(s) ? brdCall(s, pool) : null;
     // Day one is a grace day: the Geometry's heavy machinery rarely arrives before you've found your feet.
     const grace = (c) => (s.day === 1 && c.tier >= 2 ? 0.35 : 1);
     const boost = (c) => (s.asc ? ascBoost(s, c) : 1);
@@ -1224,13 +1249,14 @@ function draw(s) {
     const weights = pool.map((c) => grace(c) * boost(c) * skyWeight(s, c) * occW(c) * Math.max(0, typeof c.weight === "function" ? c.weight(s) : c.weight ?? 1));
     const sum = weights.reduce((a, b) => a + b, 0);
     let r = deckRand(s) * sum;
-    for (let i = 0; i < pool.length; i++) {
+    for (let i = 0; i < pool.length && !called; i++) {
       r -= weights[i];
       if (r <= 0) {
         id = pool[i].id;
         break;
       }
     }
+    if (called) id = called;
     id = id || (pool[pool.length - 1] || CARDS.find((c) => c.id === "meal")).id;
   }
   s.cardId = id;
@@ -1796,6 +1822,24 @@ function ascFx(s, k, v, notes) {
     case "prep":
       prepFx(s, v, notes);
       break;
+    case "brd":
+      brdFx(s, v);
+      break;
+  }
+}
+
+// The Breadth Pass's one fx (breadth.js): a thread begun or ended, and how a person stands with you. Silent: the
+// city's memory shows only in the cards it deals later. Bounded by the threads and people the data defines.
+function brdFx(s, v) {
+  const b = s.asc.brd;
+  if (!b || !v || typeof v !== "object") return;
+  if (v.clear && BRD_KEYS.has(v.clear)) delete b.t[v.clear];
+  if (v.owe && BRD_KEYS.has(v.owe)) b.t[v.owe] = s.draws | 0;
+  for (const [id, n] of Object.entries(v.npc || {})) {
+    if (!Object.hasOwn(BRD_PEOPLE, id) || !Number.isInteger(n)) continue;
+    const r = Math.max(-2, Math.min(3, (b.npc[id] | 0) + n));
+    if (r) b.npc[id] = r;
+    else delete b.npc[id];
   }
 }
 
@@ -1830,6 +1874,8 @@ function enterAct(s, n) {
   const a = s.asc;
   a.act = n;
   a.actCards = 0;
+  // A thread (breadth.js) whose answer can't come in the new movement is let go, so none is left waiting forever.
+  if (a.brd) for (const k of Object.keys(a.brd.t)) if (!BRD_THREADS[k].cards.slice(1).some((id) => !BY_ID[id].act || BY_ID[id].act.includes(n))) delete a.brd.t[k];
 }
 
 function gainRelic(s, k, notes) {
@@ -2246,9 +2292,11 @@ function ascBeforeDraw(s) {
 const ascPool = (s) => {
   const fits = (c) => !c.enc && !c.forcedOnly && (!c.act || c.act.includes(s.asc.act)) && (!c.road || c.road === s.asc.road);
   const pool = CARDS.concat(ASC_CARDS.filter(fits));
-  return occOn(s) ? pool.concat(OCC_CARDS.filter(fits)) : pool;
+  const occ = occOn(s) ? pool.concat(OCC_CARDS.filter(fits)) : pool;
+  // The Breadth Pass (breadth.js): the city's places and people, on rules 4 only.
+  return brdOn(s) ? occ.concat(BRD_CARDS.filter(fits)) : occ;
 };
-const ascBoost = (s, c) => (s.asc.act === 2 && s.asc.road ? ROADS[s.asc.road].boost[c.id] || 1 : 1);
+const ascBoost = (s, c) => (s.asc.act === 2 && s.asc.road ? ROADS[s.asc.road].boost[c.id] || 1 : 1) * (c.place && brdOn(s) ? brdWeight(s, c) : 1);
 
 // The card with its own build() applied, but before the fight's last-two rule (encWrap): what the intent reads.
 const rawCard = (s) => {
@@ -2326,6 +2374,11 @@ export function canWork(s, k) {
   if (k === "lamp" && stone && !(s.spent || []).length) return { ok: false, why: "No spent Bond to bring back." };
   if (k === "halo" && e && e.id === "trap") return { ok: false, why: "The chair doesn't take bribes." };
   if (k === "purse" && riteOn(s, "poverty")) return { ok: false, why: "Your vow: the Purse stays shut." };
+  if (RELICS[k].brd) {
+    const fee = -(relicPrice(s, k).favor || 0);
+    if (fee > 0 && s.favor < fee) return { ok: false, why: `${RELICS[k].name} costs ${fee} Favor, and you have ${s.favor ? "only " + s.favor : "none"}.` };
+    if (((RELICS[k].fx || {}).work || {}).rest && s.restedToday) return { ok: false, why: "Tonight is already a rested one." };
+  }
   const lampFee = -(relicPrice(s, k).favor || 0);
   if (k === "lamp" && !stone && s.favor < lampFee) return { ok: false, why: `The Lamp costs ${lampFee} Favor, and you have ${s.favor ? "only " + s.favor : "none"}.` };
   // A price that alone would end the run is refused: the working played out on a copy, everything it costs.
@@ -2341,7 +2394,7 @@ export function canWork(s, k) {
 const RELIC_PRICE = { glass: { longing: 1 }, key: { strain: 1 }, halo: { apo: 1 }, crown: { apo: 2 }, lamp: { favor: -1 }, purse: { gilt: 3 } };
 export function relicPrice(s, k) {
   const m = hourOf(s, k);
-  return Object.fromEntries(Object.entries(RELIC_PRICE[k]).map(([t, v]) => [t, v * m]).filter(([, v]) => v));
+  return Object.fromEntries(Object.entries(RELIC_PRICE[k] || (RELICS[k].fx && RELICS[k].fx.price) || {}).map(([t, v]) => [t, v * m]).filter(([, v]) => v));
 }
 function workFx(s, k, notes) {
   const a = s.asc;
@@ -2382,6 +2435,16 @@ function workFx(s, k, notes) {
       applyFx(s, price, notes);
       notes.push(price.gilt ? `The Almoner's Purse: Favor +3, and gilt ${price.gilt} owed: the Festival starts higher while you owe it, and a Reckoning collects it.` : "The Almoner's Purse: Favor +3, and nothing owed.");
       break;
+    default: {
+      // A Breadth relic (ascension.js RELICS fx): its working, then its price, from the table.
+      const w = (RELICS[k].fx || {}).work || {};
+      if (w.cage) s.cageSeen = true;
+      if (w.clock && e) encClockAdd(s, w.clock, notes), notes.push(`${RELICS[k].name}: ${ENCOUNTERS[e.id].clock.label} ${w.clock}.`);
+      else if (w.alt) applyFx(s, w.alt, notes), notes.push(`${RELICS[k].name}: ${fxWords(w.alt)}.`);
+      if (w.fx) applyFx(s, w.fx, notes), notes.push(`${RELICS[k].name}: ${fxWords(w.fx)}.`);
+      if (w.rest) applyFx(s, { rest: 1 }, notes), notes.push(`${RELICS[k].name}: it counts as a night's rest.`);
+      applyFx(s, price, notes);
+    }
   }
 }
 // A Stone's working (occult.js STONES): once, a new possibility, and no price.
@@ -2451,6 +2514,9 @@ function transmuteFx(s, k, notes) {
       if (s.gilt) notes.push(`Gilt cleared: ${s.gilt}.`);
       s.gilt = 0;
       break;
+    default:
+      // A Breadth relic: its own table (ascension.js RELICS fx).
+      applyFx(s, (RELICS[k].fx || {}).transmute || {}, notes);
   }
   applyFx(s, { gnosis: 1 }, notes);
 }
@@ -2527,6 +2593,7 @@ export function correspond(s, k) {
 export function canVessel(s, k) {
   const a = s.asc;
   if (!a || !a.occ || s.over || !a.relics.includes(k)) return { ok: false, why: "" };
+  if (!STONES[k]) return { ok: false, why: "This one won't go in the vessel." };
   const o = a.occ;
   if (o.vessel || o.stones.length) return { ok: false, why: "One relic a run goes into the vessel." };
   if (!(o.chapel === 1 && a.act === 1)) return { ok: false, why: "Only at the first chapel, before the road goes on." };
@@ -2583,7 +2650,7 @@ export function parseChallenge(hash, today) {
 // Exodus dares (2026-10-17): the same road for a friend. Only a short seed travels (ascension-<8 base36>); a road
 // begun before short seeds shares as a plain link. The link carries the Edict and how far the sender got.
 const ROAD_SEED = /^ascension-([0-9a-z]{8})$/;
-export const exodusRules = (s) => s.asc && s.asc.syn ? (s.asc.syn.v === 2 || s.asc.syn.v === 3 ? s.asc.syn.v : 1) : 0;
+export const exodusRules = (s) => s.asc && s.asc.syn ? ([2, 3, 4].includes(s.asc.syn.v) ? s.asc.syn.v : 1) : 0;
 export function exodusHash(s) {
   const m = s.asc && ROAD_SEED.exec(s.seedLabel);
   const version = exodusRules(s);
@@ -2591,9 +2658,9 @@ export function exodusHash(s) {
 }
 export function parseExodus(hash) {
   const m = /^#?exodus-([0-9a-z]{8})-e(\d{1,2})-a([123])(?:-d(\d))?(?:-([a-z_]+))?$/.exec(String(hash || ""));
-  if (!m || +m[2] > MAX_EDICT || (m[4] !== undefined && !["1", "2", "3"].includes(m[4]))) return null;
+  if (!m || +m[2] > MAX_EDICT || (m[4] !== undefined && !["1", "2", "3", "4"].includes(m[4]))) return null;
   const ending = m[5] && Object.prototype.hasOwnProperty.call(ENDINGS, m[5]) ? m[5] : null;
-  // A bare link replays the pre-Depth rules. -d1, -d2 and -d3 keep their own preparation and encounter rules.
+  // A bare link replays the pre-Depth rules. -d1, -d2, -d3 and -d4 keep their own preparation and encounter rules.
   return { seed: `ascension-${m[1]}`, edict: +m[2], act: +m[3], ending, ...(m[4] ? { depth: Number(m[4]) } : {}) };
 }
 // Each fight, by how it ended: a road out, a disengage, driven out; and one the run ended inside.

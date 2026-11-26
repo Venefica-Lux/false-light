@@ -6,7 +6,7 @@ import {
   newGame, choose, preview, switchMask, maskCost, maskStrain, tutorialPending, currentCard, shareText, vigilCardLine, vigilNumber, nightsSurvived,
   cardCosts, resolveStir, endCause, parseChallenge, parseExodus, exodusRules, isWin, bondsEarned, migrate, LAUNCH_DAY, CARDS, METERS, MASKS, LIGHT, ENDINGS, STAT_LABEL, STATS, CARDS_PER_DAY, BONDS,
   work, canWork, transmute, canTransmute, encClock, encBestRoad, ENCOUNTERS, INTENTS, RELICS, ROADS, ACTS, VERBS, UNLOCKS, EDICTS, MAX_EDICT, pullAt, bareAt,
-  skyToday, canRefuse, refuse, relicPrice, canCorrespond, correspond, canVessel, vessel, synergiesFor,
+  skyToday, canRefuse, refuse, relicPrice, canCorrespond, correspond, canVessel, vessel, synergiesFor, BRD_PLACES, BRD_PEOPLE, BRD_THREADS, brdEpilogue,
 } from "./engine.js";
 import {
   SPHERES, LADDER, MEANS, RITES, ACCOUNTS, PATHS, TRACK_WORD, STONES, ORBIT, occOf, occDay, pathOf, shownTrack, sphereName, riteOn, occReading, inVessel, isStone,
@@ -103,6 +103,13 @@ const occRecord = (o) => {
   const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
   return { gates: obj(x.gates), paths: obj(x.paths), rit: ritRecord(x.rit), prep: prepRecord(x.prep) };
 };
+// The Breadth Pass's record (breadth.js), for the codex only: which places were walked and who was met. Only names
+// the game still has are kept.
+const brdRecord = (o) => {
+  const x = o && typeof o === "object" && !Array.isArray(o) ? o : {};
+  const keep = (v, known) => Object.fromEntries(Object.keys(v && typeof v === "object" && !Array.isArray(v) ? v : {}).filter((k) => known[k]).map((k) => [k, 1]));
+  return { places: keep(x.places, BRD_PLACES), people: keep(x.people, BRD_PEOPLE), threads: keep(x.threads, BRD_THREADS) };
+};
 // Saved metadata outlives releases too: missing or mistyped fields take their defaults, nothing present is lost.
 function loadMeta() {
   const m = store.get("fl.meta", {});
@@ -138,6 +145,7 @@ function loadMeta() {
     // The occult expansion (occult.js), for the codex only: knowledge, never power. gates: how often each sphere's gate
     // was passed, by what means; paths: how often each way was walked.
     occ: occRecord(a.occ),
+    brd: brdRecord(a.brd),
   };
   return out;
 }
@@ -211,6 +219,19 @@ const ART = {
   relic_halo: '<path d="M65 22a32 32 0 1 0 14 18M65 22l-8 13M79 40l-15 5"/>',
   relic_crown: '<path d="M16 76l4-42l17 20l8-24M55 30l8 24l17-20l4 42M16 84h28M56 84h28M51 12l-9 26l16 20l-12 36"/>',
   relic_lamp: '<path d="M32 30h36l4 48H28zM42 30V18h16v12M50 18V8M28 86h44M50 42l10 16l-10 14l-10-14z"/>',
+  relic_tally: '<path d="M24 28l52-6 4 12-52 6zM22 52l56-4 2 12-56 4zM26 76l48-2 2 12-48 2zM34 30l2 8M46 28l2 8M58 26l2 8M36 54l2 8M50 52l2 8M64 50l2 8"/>',
+  relic_bell: '<path d="M30 70q0-30 8-38q4-6 12-6t12 6q8 8 8 38zM24 70h52M50 26V16M44 78q6 8 12 0M32 40l36 30"/>',
+  relic_shoe: '<path d="M22 40q20 6 24 20l28 4q8 2 8 12H22zM22 40v44M34 86v-8M62 86v-8M30 58l10 2"/>',
+  relic_spade: '<path d="M50 10v46M40 10h20M32 56q0 28 18 32q18-4 18-32zM50 56v26"/>',
+  relic_candle: '<path d="M38 86h24M42 86V52h16v34M50 52V42M50 42q-10-10 0-26q10 16 0 26zM44 62h12M44 72h12"/>',
+  relic_whistle: '<path d="M18 50h44q10 0 10 10t-10 10H44q-12 0-12-8V50M72 56h14M24 50L14 40M50 50V36M44 28q6-6 12 0M10 78q20 10 40 0"/>',
+  relic_shutter: '<path d="M26 14h48v72H26zM26 28h48M26 42h48M26 56h48M26 70h48M20 14v72M80 14v72"/>',
+  relic_laurel: '<path d="M50 84Q22 76 22 46Q24 28 34 18M50 84Q78 76 78 46Q76 28 66 18M30 66l-10-4M28 50l-10-6M34 34l-8-8M70 66l10-4M72 50l10-6M66 34l8-8M50 84v8"/>',
+  relic_compass: '<circle cx="50" cy="50" r="34"/><path d="M50 16v8M50 76v8M16 50h8M76 50h8M50 50l12-22l-4 28l-20 10z"/>',
+  relic_scale: '<path d="M50 18v60M32 80h36M20 34h60M20 34l-10 22h20zM80 34l-10 22h20z"/>',
+  relic_coin: '<circle cx="50" cy="50" r="32"/><path d="M42 42h16v16H42z"/>',
+  relic_censer: '<path d="M30 54h40q0 24-20 24q-20 0-20-24zM50 54V30M36 30h28M44 22q6-8 12 0M40 86h20"/>',
+  relic_letter: '<path d="M18 30h64v42H18zM18 30l32 26l32-26M44 62l-14 8M56 62l14 8"/>',
   relic_purse: '<path d="M36 20h28l-6 20q24 18 22 38q-2 14-30 14T20 78q-2-20 22-38zM36 40h28M42 14l8 8l8-8"/>',
 
   eye: '<path d="M8 50Q50 12 92 50Q50 88 8 50Z"/><circle cx="50" cy="50" r="15"/><circle cx="50" cy="50" r="6" fill="currentColor"/>',
@@ -1042,6 +1063,9 @@ function renderCard(deal = true) {
   const fight = encOf(run);
   $("say").textContent = c.text;
   $("who").textContent = c.who;
+  // A Breadth card names its place (rules 4 only: no earlier card has one).
+  $("where").hidden = !c.place;
+  $("where").textContent = c.place ? BRD_PLACES[c.place].name : "";
   $("art").innerHTML = face(c.art, c.enc);
   $("numeral").textContent = c.tutorial ? "0" : c.numeral || CARD_NO[c.id] || "";
   // A reversed Arcanum is drawn as it lies: upside down.
@@ -1064,6 +1088,16 @@ function renderCard(deal = true) {
   if (fight && fight.intent) {
     meta.asc.seen[fight.intent] = 1;
     saveMeta();
+  }
+  if (c.place && run.asc) {
+    const b = meta.asc.brd;
+    const fresh = !b.places[c.place] || (c.npc && !b.people[c.npc]);
+    b.places[c.place] = 1;
+    if (c.npc) b.people[c.npc] = 1;
+    // A thread is booked once it has begun, by name only; how it ends is never written here.
+    const begun = Object.keys((run.asc.brd && run.asc.brd.t) || {}).filter((k) => BRD_THREADS[k] && !b.threads[k]);
+    for (const k of begun) b.threads[k] = 1;
+    if (fresh || begun.length) saveMeta();
   }
   refreshChoices();
   const card = $("card");
@@ -2008,7 +2042,9 @@ async function encounterEnd(res) {
 function relicGuide() {
   const held = run && run.asc ? run.asc.relics : [];
   const shut = run && run.asc ? run.asc.locked : sealed();
+  // A Breadth relic is listed only while you carry it: its name and working are a find, not a spoiler.
   const rows = Object.entries(RELICS)
+    .filter(([k, r]) => !r.brd || held.includes(k))
     .map(([k, r]) => shut.includes(k) && !held.includes(k) ? `<div class="mrow locked">${svg(r.art, 5)}<p><b>A relic, sealed</b> · ${esc(UNLOCKS[k].hint)}</p></div>` : `<div class="mrow${held.includes(k) ? " on" : ""}">${svg(r.art, 5)}<p><b>${esc(r.name)}</b> · ${esc(r.works)}. <span class="risk">Price: ${esc(r.price)}.</span> ${r.uses} use${r.uses === 1 ? "" : "s"}, readied at a chapel. Transmuted: ${esc(r.transmute)}, Gnosis +1.<br>${esc(r.found)}</p></div>`)
     .join("");
   return overlay(`<div class="eyebrow">Relics · Exodus</div><div class="rules"><p>Confiscated things, taken back. ${run && run.asc && run.asc.edict >= 3 ? "Under Confiscation you carry one; a second means leaving it." : "You carry two; a third means leaving one."} Working a relic spends a use, and only a chapel's Prepare readies them again. Transmuting one destroys it for good, toward freedom: its own effect, and Gnosis +1. Tap a relic in play for what it would do to the card in front of you.</p>${run?.asc?.syn ? '<p><b>Synergy.</b> Some relics can work with what you carry, wear or know. When the tray says Synergy, open the relic to see the effect and its price.</p>' : ""}${rows}</div><div class="row"><button class="btn ghost" data-v="ok" type="button">Close</button></div>`, { dismiss: false });
@@ -2050,6 +2086,26 @@ function prepCodex() {
   }).join("");
   return `<div class="eyebrow">Preparation</div>${rows}`;
 }
+// The Breadth Pass: the places walked and the people met, as the codex has learned them. What's still ahead is
+// counted, never named, and no entry says how anything turned out.
+function breadthCodex() {
+  const b = meta.asc.brd;
+  const part = (title, all, got, none) => {
+    const ks = Object.keys(all).filter((k) => got[k]);
+    const rest = Object.keys(all).length - ks.length;
+    const rows = ks.map((k) => `<div><h4>${esc(all[k].name)}</h4><p>${esc(all[k].line)}</p></div>`).join("");
+    const left = rest ? `<div class="locked"><h4>${rest === Object.keys(all).length ? none : `${rest} more`}</h4><p>Not yet on your road.</p></div>` : "";
+    return `<div class="eyebrow">${title}</div>${rows}${left}`;
+  };
+  // Threads: the name of each one begun, and only whether it is still open on the road in hand. Nothing about
+  // how it can end, or what answers it; the ones not yet begun are counted, never named.
+  const open = (run && run.asc && run.asc.brd && run.asc.brd.t) || {};
+  const tk = Object.keys(BRD_THREADS).filter((k) => b.threads[k]);
+  const tleft = Object.keys(BRD_THREADS).length - tk.length;
+  const trows = tk.map((k) => `<div><h4>${esc(BRD_THREADS[k].name)}</h4><p>${Object.hasOwn(open, k) ? "Open on this road." : "Begun on a road."}</p></div>`).join("");
+  const tlock = tleft ? `<div class="locked"><h4>${tleft === Object.keys(BRD_THREADS).length ? "None begun yet" : `${tleft} more`}</h4><p>Not yet on your road.</p></div>` : "";
+  return part("Places walked", BRD_PLACES, b.places, "None walked yet") + part("People met", BRD_PEOPLE, b.people, "No one met yet") + `<div class="eyebrow">Threads begun</div>${trows}${tlock}`;
+}
 // What you've learned about the adversaries, in canon's own terms (§13): detection, danger, counter, impact.
 // Knowledge, never power. Unmet ones show only where they wait.
 function codex() {
@@ -2070,7 +2126,7 @@ function codex() {
   const shut = sealed().map((k) => `<div class="locked"><h4>${UNLOCKS[k].kind === "road" ? "A road" : "A relic"}, sealed</h4><p>${esc(UNLOCKS[k].hint)}</p></div>`).join("");
   const line = meta.asc.lineage.length ? `<div class="eyebrow">Your line</div>${meta.asc.lineage.slice().reverse().map((x) => `<div${x.won ? "" : ' class="locked"'}><h4>${esc(x.n)} · ${esc(x.by)}</h4><p>${esc(ACTS[x.act] ? ACTS[x.act].name : "")}${x.edict ? ` · Edict ${roman(x.edict)}` : ""}${x.won ? " · got out" : ""}</p></div>`).join("")}` : "";
   const eds = EDICTS.slice(1).map((e, i) => (i < meta.asc.edict ? `<div><h4>Edict ${roman(i + 1)} · ${esc(e.name)}</h4><p>${esc(e.text)}</p></div>` : i === meta.asc.edict ? `<div class="locked"><h4>Edict ${roman(i + 1)}, sealed</h4><p>Walk a Way Out under ${i ? `Edict ${roman(i)}` : "no Edict"}.</p></div>` : "")).join("");
-  return overlay(`<div class="eyebrow">Adversaries · Exodus</div><div class="gallery" tabindex="0" role="region" aria-label="Codex entries">${rows}${shut ? `<div class="eyebrow">Still sealed</div>${shut}` : ""}${sevenCodex()}${ritCodex()}${prepCodex()}<div class="eyebrow">Edicts</div>${eds}${line}</div><button class="btn ghost" data-v="ok" type="button">Close</button>`, { dismiss: false, focus: "heading" });
+  return overlay(`<div class="eyebrow">Adversaries · Exodus</div><div class="gallery" tabindex="0" role="region" aria-label="Codex entries">${rows}${shut ? `<div class="eyebrow">Still sealed</div>${shut}` : ""}${sevenCodex()}${ritCodex()}${prepCodex()}${breadthCodex()}<div class="eyebrow">Edicts</div>${eds}${line}</div><button class="btn ghost" data-v="ok" type="button">Close</button>`, { dismiss: false, focus: "heading" });
 }
 
 // ---------- endings ----------
@@ -2240,6 +2296,11 @@ function ascSummary(s) {
 }
 // The occult expansion's reading of the ending (occult.js OCC_READINGS): the same Way Out, read by the way you walked
 // it, and the facts under it. No new endings.
+// Rules 4: one line of what the road left behind, when it left something.
+function brdEnd(s) {
+  const l = brdEpilogue(s);
+  return l ? `<p class="fine brdepi">${esc(l)}</p>` : "";
+}
 function occEnd(s) {
   const o = s.asc && s.asc.occ;
   if (!o) return "";
@@ -2271,7 +2332,7 @@ function endHtml(s, text, info) {
   const asc = s.mode === "ascension" ? ascSummary(s) : "";
   return `<div class="eyebrow">${s.mode === "vigil" ? `Vigil #${vigilNumber(s.seedLabel)}` : s.mode === "ascension" ? `Exodus${s.asc.edict ? ` · Edict ${roman(s.asc.edict)}` : ""} · ${esc(ACTS[s.asc.act].name)}` : "Endless"} · Night ${s.day}</div>
     ${info.firstFind ? `<div class="newend">${e.win ? `Your first ${esc(e.title.replace(/^The /, ""))}` : "A new ending"}, ${found} of ${keys.length} found</div>` : ""}
-    ${endingArt(s.over)}<h2 class="big">${esc(e.title)}</h2><p class="line">${esc(e.line)}</p>${occEnd(s)}
+    ${endingArt(s.over)}<h2 class="big">${esc(e.title)}</h2><p class="line">${esc(e.line)}</p>${brdEnd(s)}${occEnd(s)}
     <p class="endcause">${causeSentence(s)}${e.win ? `${esc(e.title)} on night ${s.day}.` : n === 0 ? (s.endBy === "nightfall" ? "It was your first night" : "You didn't reach the first nightfall") : `You lasted ${plural(n, "night")}`}${e.win ? "" : info.newBest ? `, <b class="best">your best yet</b>.` : meta.plays > 1 ? `. Your best is ${meta.best}.` : "."}</p>
     ${lesson(s)}
     ${vs}${dareVs}
@@ -2623,7 +2684,7 @@ const abandonedText = (date) => [`FALSE LIGHT · Vigil #${vigilNumber(date)} · 
 // A road's seed is short enough to send: eight base-36 characters.
 const roadSeed = () => "ascension-" + Array.from({ length: 8 }, () => "0123456789abcdefghijklmnopqrstuvwxyz"[Math.floor(Math.random() * 36)]).join("");
 const sameExodus = (saved, dare) => saved && saved.seedLabel === dare.seed && saved.asc.edict === dare.edict && exodusRules(saved) === (dare.depth || 0);
-const exodusRulesLabel = (version) => version ? `Depth Pass ${version}` : "Original rules";
+const exodusRulesLabel = (version) => version === 4 ? "Breadth Pass" : version ? `Depth Pass ${version}` : "Original rules";
 async function start(mode, date = todayISO(), { late = false, dare = null } = {}) {
   $("layer").innerHTML = "";
   backdrop();
